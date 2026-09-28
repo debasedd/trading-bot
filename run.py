@@ -1,0 +1,878 @@
+"""
+run.py — Titik masuk utama (Entry Point) Sistem AI Trading Agent Kripto Futures.
+
+Menjalankan:
+1. Inisialisasi Database SQLite
+2. Inisialisasi Event Bus & Data Feed (Binance Futures Publik)
+3. Inisialisasi & Peluncuran 4 Agen Otonom:
+   - NewsAgent (Pemindai Berita & Sentimen)
+   - AnalysisAgent (Teknikal, Fundamental, ML)
+   - DecisionAgent (Penalaran Keputusan & Risiko)
+   - ExecutionAgent (Simulasi Eksekusi Paper Trading)
+4. Scheduler Penyesuaian Jam Pasar AS
+5. Dashboard Visual Real-time (Dash/Plotly di thread terpisah)
+"""
+
+import asyncio
+import logging
+import signal
+import sys
+import threading
+from typing import List, Optional
+
+# Bungkam seluruh log akses HTTP polling Werkzeug & Flask di terminal
+from werkzeug.serving import WSGIRequestHandler
+
+
+def _silence_request_log(self, *args, **kwargs) -> None:
+    """No-op pengganti `WSGIRequestHandler.log_request`.
+
+    Polling dashboard setiap 500ms jadi membanjiri terminal kalau tidak
+    dibungkam. Parameter sengaja dibiarkan apa adanya agar signature-nya
+    tetap cocok dengan yang dipanggil Werkzeug.
+    """
+    del self, args, kwargs
+
+
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+logging.getLogger("flask").setLevel(logging.ERROR)
+WSGIRequestHandler.log_request = _silence_request_log
+
+from core.config import get_config
+from core.logger import (
+    end_quiet_mode,
+    get_logger,
+    setup_logger,
+    stage,
+    stage_done,
+    step,
+)
+from core.event_bus import EventBus
+from core.scheduler import AgentScheduler
+from database.db import init_db, close_db, get_db
+from database.repository import Repository
+from data.price_feed import PriceFeed
+from data.macro_fetcher import MacroFetcher
+from data.sentiment import SentimentAnalyzer
+from trading.paper_engine import PaperTradingEngine
+from agents.news_agent import NewsAgent
+from agents.analysis_agent import AnalysisAgent
+from agents.decision_agent import DecisionAgent
+from agents.execution_agent import ExecutionAgent
+from agents.direction_agents import DirectionEnsembleAgent
+from dashboard.app import run_dashboard
+
+logger = get_logger("main")
+
+
+def _print_safe(text: str):
+    """
+    Cetak teks yang mungkin berisi karakter blok/box-drawing.
+
+    Console Windows default-nya cp1252 dan tidak punya glyph `╔` atau
+    `█`. `print()` biasa akan melempar UnicodeEncodeError dan menggagalkan
+    seluruh startup — termasuk saat stdout di-redirect ke file atau pipe.
+
+    Kita ganti encoding stdout ke UTF-8 dengan errors="replace" lebih dulu,
+    lalu tetap print seperti biasa. Kalau tidak bisa, terakhiran kita
+    tulis ke sys.stderr, yang tidak pernah menggagalkan startup.
+    """
+    try:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+        print(text)
+    except UnicodeEncodeError:
+        try:
+            sys.stderr.write(text + "\n")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def print_banner():
+    """Tampilkan banner ASCII futuristik nan berwarna di terminal."""
+    banner = """
+\033[38;5;51m╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                               ║
+║   \033[38;5;48m██████╗ ██╗  ██╗███████╗ ██████╗███████╗██████╗ ███████╗\033[38;5;51m                                    ║
+║  \033[38;5;48m██╔═████╗╚██╗██╔╝██╔════╝██╔════╝██╔════╝╚════██╗██╔════╝\033[38;5;51m                                    ║
+║  \033[38;5;48m██║██╔██║ ╚███╔╝ █████╗  ██║     █████╗   █████╔╝███████╗\033[38;5;51m    \033[1;37m0XF3CE25 // AUTONOMOUS AI\033[38;5;51m       ║
+║  \033[38;5;48m████╔╝██║ ██╔██╗ ██╔══╝  ██║     ██╔══╝  ██╔═══╝ ╚════██║\033[38;5;51m    \033[38;5;220mCRYPTO FUTURES TERMINAL\033[38;5;51m         ║
+║  \033[38;5;48m╚██████╔╝██╔╝ ██╗██║     ╚██████╗███████╗███████╗███████║\033[38;5;51m    \033[38;5;141mHIGH-FREQUENCY SCALPER\033[38;5;51m          ║
+║   \033[38;5;48m╚═════╝ ╚═╝  ╚═╝╚═╝      ╚═════╝╚══════╝╚══════╝╚══════╝\033[38;5;51m                                    ║
+║                                                                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════════════════════╣
+║  \033[1;32m● ARCHITECTURE\033[38;5;51m : 4 SPECIALIST AGENTS (NEWS · ANALYSIS · DECISION · EXECUTION)               ║
+║  \033[1;33m● ENGINE MODE \033[38;5;51m : ULTRA-FAST HIGH-FREQUENCY SCALPING (SUB-SECOND EXECUTION)                   ║
+║  \033[1;34m● MARKET FEED \033[38;5;51m : HYPERLIQUID WEBSOCKET (178 PERPS) + BINANCE FUTURES DATA                     ║
+║  \033[1;35m● AI MODELS   \033[38;5;51m : FINBERT SENTIMENT + RANDOMFOREST ML + TECHNICAL CONFLUENCE                    ║
+║  \033[1;36m● BLOOMBERG UI\033[38;5;51m : RETRO DASHBOARD ACTIVE ON \033[4;37mhttp://127.0.0.1:8050\033[0;38;5;51m                              ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════╝\033[0m
+"""
+    _print_safe(banner)
+
+
+def print_startup_summary(config, symbols, mode="paper", address=None):
+    """
+    Cetak ringkasan subsistem berbingkai ASCII rapi.
+
+    `mode` dan `address` ditampilkan di sini, bukan hanya di menu. Layar
+    yang menyebut wallet mana yang sedang dipakai adalah satu-satunya
+    tempat operator bisa memverifikasi sekilas bahwa botnya tidak sedang
+    memegang akun yang salah.
+    """
+    sym_list = ", ".join(s.split("/")[0] for s in symbols[:8])
+
+    if mode == "paper":
+        mode_line = (
+            "│  \033[38;5;48m✔\033[0m "
+            "\033[1;32mMODE: SIMULASI (PAPER)\033[0m"
+            "\033[38;5;244m — nol order ke bursa\033[0;38;5;239m         │"
+        )
+    else:
+        label = "TESTNET" if mode == "testnet" else "MAINNET"
+        colour = "\033[1;33m" if mode == "testnet" else "\033[1;41;97m"
+        mode_line = (
+            "│  \033[38;5;48m✔\033[0m "
+            "{colour}\033[1mMODE LIVE: {label}\033[0m"
+            "\033[38;5;255m  {addr}\033[0;38;5;239m   │"
+        ).format(colour=colour, label=label,
+                 addr=(address or "tidak diketahui")[:42])
+
+    card = f"""
+\033[38;5;239m┌── \033[1;37mSUBSYSTEM STATUS MATRIX\033[0;38;5;239m ────────────────────────────────────────────────────────┐
+│  \033[38;5;48m✔\033[0m Database Engine       : \033[38;5;255mSQLite WAL Mode (data_store/trading_bot.db)\033[0;38;5;239m     │
+{mode_line}
+│  \033[38;5;48m✔\033[0m Scalping Frequency    : \033[38;5;220m0.3s Loop\033[0m \033[38;5;239m│\033[0m Batch: \033[38;5;220m{config.scalping.batch_size}\033[0m \033[38;5;239m│\033[0m Max Pos: \033[38;5;220m{config.risk.max_open_positions}\033[0;38;5;239m     │
+│  \033[38;5;48m✔\033[0m Targets & Risk Limits : TP: \033[32m+{config.scalping.fast_tp_pct:.2%}\033[0m \033[38;5;239m│\033[0m SL: \033[31m-{config.scalping.tight_sl_pct:.2%}\033[0m \033[38;5;239m│\033[0m Lev: \033[38;5;141m{config.risk.default_leverage}x\033[0;38;5;239m        │
+│  \033[38;5;48m✔\033[0m Active Top Symbols    : \033[38;5;51m{sym_list}\033[0;38;5;239m             │
+└───────────────────────────────────────────────────────────────────────────────────┘\033[0m
+"""
+    _print_safe(card)
+
+
+def _choose_mode():
+    """
+    Tentukan mode jalan lewat menu terminal.
+
+    Selalu mengembalikan keputusan yang valid. Kalau live tidak lolos
+    konfirmasi, hasilnya `paper` — bukan error. Bot yang gagal start karena
+    operator ragu-ragu lebih berbahaya daripada bot yang jalan dalam mode
+    simulasi yang diketahui aman.
+
+    `--paper` memaksa simulasi tanpa menampilkan menu; itu satu-satunya
+    cara menjalankan bot tanpa interaksi.
+    """
+    from trading.live.console import ModeDecision
+
+    cfg = get_config().live
+
+    if "--paper" in sys.argv or "--non-interactive" in sys.argv:
+        _print_safe("  Mode simulasi dipilih lewat argumen baris perintah.")
+        return ModeDecision(mode="paper", reason="--paper")
+
+    # Argumen mode eksplisit. Tanpa blok ini, `python run.py --testnet`
+    # diam-diam jatuh ke simulasi karena tidak ada yang membaca
+    # argumennya -- dan penutup yang diserahkan ke bursa mengira ini live.
+    for flag, mode in (("--testnet", "testnet"), ("--live", "mainnet")):
+        if flag in sys.argv:
+            if mode == "mainnet":
+                _print_safe("")
+                _print_safe(
+                    "  PERINGATAN: --live memakai uang sungguhan.")
+                _print_safe(
+                    "  Pastikan testnet sudah terbukti dulu, dan wallet")
+                _print_safe(
+                    "  hanya berisi jumlah yang sanggup hilang.")
+                _print_safe("")
+            else:
+                _print_safe("  Mode testnet dipilih lewat argumen perintah.")
+            return ModeDecision(mode=mode, reason=flag)
+
+    try:
+        from trading.live.console import ask_mode
+
+        return ask_mode(cfg)
+    except KeyboardInterrupt:
+        _print_safe("\n  Dibatalkan oleh pengguna. Bot tidak berjalan.")
+        return ModeDecision(mode="paper", refused=True, reason="dibatalkan")
+    except ImportError as exc:
+        _print_safe(f"  Menu live tidak tersedia ({exc}). Mode simulasi dipakai.")
+        return ModeDecision(mode="paper", refused=True, reason="menu gagal")
+
+
+class TradingBotApp:
+    """Aplikasi terpadu AI Trading Bot."""
+
+    def __init__(self, decision=None):
+        self.config = get_config()
+        self.decision = decision
+        self.mode = getattr(decision, "mode", "paper") if decision else "paper"
+        self.event_bus = EventBus()
+        self.scheduler = AgentScheduler()
+        self.price_feed = PriceFeed(self.event_bus)
+        self.sentiment_analyzer = SentimentAnalyzer(use_finbert=True)
+        self.macro_fetcher = MacroFetcher()
+        self.paper_engine = PaperTradingEngine(self.event_bus)
+
+        # Agen-agen
+        self.news_agent: NewsAgent = None
+        self.analysis_agent: AnalysisAgent = None
+        self.decision_agent: DecisionAgent = None
+        self.execution_agent: ExecutionAgent = None
+        self.ensemble_agent: DirectionEnsembleAgent = None
+
+        self._running = False
+        self._background_tasks: List[asyncio.Task] = []
+        self._repo: Optional[Repository] = None
+
+    async def _get_repo(self) -> Repository:
+        """Repository tunggal untuk seluruh operasi DB di level aplikasi."""
+        if self._repo is None:
+            self._repo = Repository(await get_db())
+        return self._repo
+
+    async def _build_live_executor(self):
+        """
+        Bangun adapter live lengkap dengan gerbang dan loop.
+
+        Urutannya penting dan tidak boleh diacak:
+
+        1. `SafetyGate` dibuat DULU. Gate yang hanya siap setelah
+           koneksi bursa bisa terlewati kalau ada order yang datang
+           duluan.
+        2. Health check dijalankan SEBELUM loop dimulai. Kalau posisi
+           lokal dan bursa sudah berbeda saat start, itu harus
+           ketahuan sebelum order pertama.
+        3. Kalau health check gagal, JANGAN mulai loop. Bot yang
+           menjalankan loop dengan state tidak sinkron akan menebak
+           posisi -- dan menebak posisi berarti menggandakan eksposur.
+        """
+        import os
+
+        from core.config import LiveConfig
+        from trading.live.client import LiveExchange
+        from trading.live.engine import LiveEngine
+        from trading.live.executor import LiveExecutor
+        from trading.live.safety import SafetyGate
+
+        live_cfg = LiveConfig()
+        key = (os.environ.get(live_cfg.private_key_env) or "").strip()
+        if not key:
+            raise RuntimeError(
+                "{} belum diisi; mode live tidak bisa dijalankan".format(
+                    live_cfg.private_key_env))
+
+        api_wallet = (os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS")
+                      or "").strip() or None
+        testnet = self.mode == "testnet"
+
+        gate = SafetyGate(live_cfg)
+        exchange = LiveExchange(key, testnet=testnet,
+                                account_address=api_wallet)
+        engine = LiveEngine(gate=gate, exchange=exchange, cfg=live_cfg)
+
+        health = await engine.health_check()
+        if not health["ok"]:
+            raise RuntimeError(
+                "Health check gagal saat start, loop TIDAK dijalankan: "
+                + "; ".join(health["problems"][:3]))
+
+        logger.info("Live siap: %s @ %s (%d aset)",
+                    exchange.query_address, exchange.base_url,
+                    len(exchange.asset_rules()))
+
+        async def _decide():
+            """Placeholder: agent sudah pushes order lewat event bus."""
+            return None
+
+        self._live_task = asyncio.create_task(
+            engine.run_loop(interval=5.0, on_decision=_decide))
+        self._live_engine_obj = engine
+        return LiveExecutor(engine)
+
+    async def initialize(self):
+        """Inisialisasi semua subsistem."""
+        logger.info("=== MEMULAI SISTEM AI TRADING AGENT (PAPER TRADING) ===")
+
+        # 1. Database
+        stage("Preparing database")
+        await init_db()
+        stage_done("Database siap (SQLite WAL)")
+        logger.info("Database lokal SQLite siap (WAL mode)")
+
+        # 2. Paper Engine & Saldo Virtual
+        await self.paper_engine.initialize()
+        logger.info(f"Paper Engine aktif — saldo awal: {self.config.account.initial_balance} USDT")
+
+        # 3. Price Feed
+        stage("Connecting to exchanges")
+        await self.price_feed.initialize()
+        stage_done("Exchange terhubung")
+
+        # 3b. Deteksi & Perbarui Top Volume Futures jika diaktifkan
+        scanning_cfg = getattr(self.config, "scanning", None)
+        if scanning_cfg and scanning_cfg.dynamic_top_volume:
+            stage(
+                f"Scanning top {scanning_cfg.top_n} volume futures",
+                total=scanning_cfg.top_n,
+            )
+            logger.info(f"Memindai Top {scanning_cfg.top_n} Volume Futures...")
+            top_syms = await self.price_feed.discover_top_volume_symbols(limit=scanning_cfg.top_n)
+            step()
+            if top_syms:
+                self.config.symbols = top_syms
+                logger.info(f"Simbol aktif diperbarui ke Top {len(top_syms)} Volume: {top_syms}")
+                stage_done(f"Top {len(top_syms)} symbols: "
+                           + ", ".join(s.split('/')[0] for s in top_syms[:5])
+                           + "…")
+            else:
+                stage_done("Scan selesai — memakai daftar config")
+
+        # 3c. Mulai streaming WebSocket Hyperliquid untuk orderbook & lilin live
+        stage("Opening market data stream")
+        await self.price_feed.start_streaming()
+        stage_done("WebSocket tersambung")
+
+        # 4. Sentiment Analyzer
+        stage("Loading sentiment models")
+        await self.sentiment_analyzer.initialize()
+        stage_done("Model sentiment siap")
+
+        # 5. Inisialisasi Agen
+        stage("Starting agents", total=5)
+        self.news_agent = NewsAgent(self.event_bus, self.sentiment_analyzer)
+        step(label="Starting agents · news")
+        self.analysis_agent = AnalysisAgent(
+            self.event_bus,
+            self.price_feed,
+            self.macro_fetcher,
+            self.sentiment_analyzer,
+        )
+        step(label="Starting agents · analysis")
+        self.decision_agent = DecisionAgent(self.event_bus, self.paper_engine.risk_manager)
+        step(label="Starting agents · decision")
+
+        # Engine eksekusi: paper atau live, tergantung mode yang dipilih.
+        # Keduanya memenuhi antarmuka yang sama, jadi ExecutionAgent tidak
+        # perlu tahu mana yang aktif.
+        self.live_engine = None
+        executor = self.paper_engine
+        if self.mode in ("testnet", "mainnet"):
+            executor = await self._build_live_executor()
+        self.executor = executor
+
+        self.execution_agent = ExecutionAgent(self.event_bus, executor)
+        step(label="Starting agents · execution")
+
+        # 5b. Ensemble arah LONG/SHORT (multi-agen).
+        # Dibangun setelah price feed streaming aktif supaya market_store
+        # sudah berisi order book, harga, dan tape trade.
+        if self.config.ensemble.enabled:
+            self.ensemble_agent = DirectionEnsembleAgent(
+                self.event_bus,
+                self.config.symbols,
+                self.config.database_path,
+            )
+            await self.ensemble_agent.initialize()
+        else:
+            self.ensemble_agent = None
+            logger.info("Ensemble arah LONG/SHORT dinonaktifkan via config")
+
+        await self.analysis_agent.initialize()
+        await self.decision_agent.initialize()
+        await self.execution_agent.initialize()
+        step(label="Starting agents · ready")
+        stage_done("5 agents + direction ensemble siap")
+        logger.info("Semua agen otonom siap")
+
+        # 6. Prefetch data lilin historis untuk semua simbol
+        await self._prefetch_historical_candles()
+
+        # 7. Update awal makroekonomi
+        stage("Reading macro calendar")
+        await self.analysis_agent.update_macro()
+        stage_done("Kalender makro dimuat")
+
+        # Cetak ringkasan status sistem berbingkai ASCII
+        print_startup_summary(
+            self.config, self.config.symbols,
+            mode=self.mode,
+            address=getattr(self.decision, "address", None),
+        )
+
+    async def _prefetch_historical_candles(self):
+        """Ambil data candle historis awal agar chart dan indikator langsung berisi."""
+        symbols = self.config.symbols
+        timeframes = ["1m", "5m", "1h"]
+        total = len(symbols) * len(timeframes)
+        stage(f"Fetching market data · {len(symbols)} symbols", total=total)
+        logger.info(
+            f"Mengunduh data candle historis awal untuk {len(symbols)} simbol..."
+        )
+
+        done = 0
+        for symbol in symbols:
+            for tf in timeframes:
+                try:
+                    limit_count = 240 if tf == "1m" else 120
+                    candles = await self.price_feed.fetch_ohlcv(symbol, timeframe=tf, limit=limit_count, save_to_db=True)
+                    logger.info(f"Lilin awal {symbol} ({tf}): {len(candles)} candle tersimpan")
+                except Exception as e:
+                    logger.warning(f"Gagal prefetch {symbol} {tf}: {e}")
+                done += 1
+                step(label=f"Fetching {symbol.split('/')[0]} {tf}")
+
+        stage_done(f"{done} candle sets dimuat")
+
+    async def _prune_direction_snapshots(self):
+        """
+        Buang snapshot arah lama agar tabel tidak tumbuh tanpa batas.
+
+        Tabel ini ditulis ensemble setiap `ensemble.interval_seconds` untuk
+        setiap simbol: pada 5 detik x 10 simbol, itu 172.800 baris per hari.
+        Tanpa prune, `get_latest_direction_snapshots` — yang dipakai HUD untuk
+        menggambar konstelasi neural net — makin lama harus menyapu tabel yang
+        terus membesar, dan itu langsung terasa sebagai jitter di dashboard.
+
+        Nilai interval dan batas simpan diambil dari config, bukan ditulis
+        langsung di sini, supaya batas retensi bisa diubah tanpa menyentuh
+        kode.
+        """
+        keep = int(getattr(self.config, "snapshot_keep_per_symbol", 120))
+        try:
+            repo = await self._get_repo()
+            await repo.prune_direction_snapshots(keep_per_symbol=keep)
+            logger.debug(f"Prune snapshot arah selesai (keep {keep} per simbol)")
+        except Exception as e:
+            # Kegagalan prune tidak boleh menjatuhkan sistem: penuhnya disk
+            # adalah masalah operasional, bukan alasan berhenti bertransaksi.
+            logger.warning(f"Prune snapshot arah gagal: {e}")
+
+    async def _prune_agent_logs(self):
+        """
+        Pangkas `agent_logs` supaya tabelnya tidak tumbuh tanpa batas.
+
+        Berbeda dari `direction_snapshots` yang prune per simbol, ini cukup
+        memotong yang paling lama secara global — tidak ada dimensi yang perlu
+        dijaga per simbol seperti pada snapshot arah.
+        """
+        keep = int(getattr(self.config, "agent_log_keep", 5000))
+        try:
+            repo = await self._get_repo()
+            await repo.prune_agent_logs(keep=keep)
+            logger.debug(f"Prune agent_logs selesai (keep {keep})")
+        except Exception as e:
+            logger.warning(f"Prune agent_logs gagal: {e}")
+
+    async def _maintenance_loop(self):
+        """
+        Task latar untuk perawatan database yang berjalan terus-menerus.
+
+        Dipisah dari `direction_snapshot_prune` yang dijadwalkan APScheduler
+        supaya prune pertama benar-benar terjadi di menit pertama, bukan satu
+        jam setelah boot — pada jam pertama itulah tabel tumbuh paling cepat
+        dan belum ada satu pun baris lama untuk dipangkas.
+        """
+        interval = max(60, int(getattr(self.config, "snapshot_prune_interval", 3600)))
+        while self._running:
+            await asyncio.sleep(interval)
+            if not self._running:
+                break
+            await self._prune_direction_snapshots()
+
+    def setup_scheduler(self):
+        """Daftarkan jadwal tugas setiap agen dengan penyesuaian jam pasar AS."""
+        intervals = self.config.agent_intervals
+
+        # Penjadwalan Pembaruan Berkala Top Volume Futures
+        scanning_cfg = getattr(self.config, "scanning", None)
+        if scanning_cfg and scanning_cfg.dynamic_top_volume:
+            async def _refresh_top_volume():
+                logger.info("Memperbarui ranking Top Volume Futures berkala...")
+                new_top = await self.price_feed.discover_top_volume_symbols(limit=scanning_cfg.top_n)
+                if new_top:
+                    self.price_feed.update_symbols(new_top)
+
+            self.scheduler.add_fixed_job(
+                name="refresh_top_volume",
+                func=_refresh_top_volume,
+                interval_seconds=scanning_cfg.refresh_interval,
+            )
+
+        # Agen Berita (NewsAgent)
+        self.scheduler.add_agent_job(
+            name="news_agent",
+            func=self.news_agent.run_cycle,
+            interval_normal=intervals.news_agent,
+            interval_us_open=intervals.news_agent_us_open,
+            start_immediately=True,
+        )
+
+        # Agen Analisis (AnalysisAgent)
+        self.scheduler.add_agent_job(
+            name="analysis_agent",
+            func=self.analysis_agent.run_cycle,
+            interval_normal=intervals.analysis_agent,
+            interval_us_open=intervals.analysis_agent_us_open,
+            start_immediately=True,
+        )
+
+        # Agen Pengambil Keputusan (DecisionAgent)
+        self.scheduler.add_agent_job(
+            name="decision_agent",
+            func=self.decision_agent.run_cycle,
+            interval_normal=intervals.decision_agent,
+            interval_us_open=intervals.decision_agent_us_open,
+            start_immediately=False,
+        )
+
+        # Ensemble arah LONG/SHORT — sumber tunggal untuk HUD scanner DAN
+        # DecisionAgent. Dafar di sini (bukan di initialize) supaya ticker
+        # pertama-tama jelas setelah price feed & scheduler hidup.
+        if self.ensemble_agent is not None:
+            self.scheduler.add_fixed_job(
+                name="direction_ensemble",
+                func=self.ensemble_agent.run_cycle,
+                interval_seconds=self.config.ensemble.interval_seconds,
+            )
+
+            # Buang snapshot lama secara berkala; tanpa prune tabel tumbuh
+            # ~172.800 baris/hari pada interval 5 detik x 10 simbol. Interval
+            # dan batas retensi berasal dari config, bukan angka tetap di sini.
+            self.scheduler.add_fixed_job(
+                name="direction_snapshot_prune",
+                func=self._prune_direction_snapshots,
+                interval_seconds=max(
+                    60, int(getattr(self.config, "snapshot_prune_interval", 3600))
+                ),
+            )
+
+        # `agent_logs` juga tumbuh tanpa batas: decision loop menulis satu
+        # baris per siklus (0,3 detik) termasuk saat tidak ada yang terjadi,
+        # jadi ~214 baris/menit atau ~309.000 per hari. Tabel ini TIDAK
+        # disentuh `prune_direction_snapshots`, jadi butuh jalurnya sendiri.
+        self.scheduler.add_fixed_job(
+            name="agent_log_prune",
+            func=self._prune_agent_logs,
+            interval_seconds=max(
+                60, int(getattr(self.config, "agent_log_prune_interval", 1800))
+            ),
+        )
+
+        # Update Makroekonomi (6 jam)
+        self.scheduler.add_fixed_job(
+            name="macro_update",
+            func=self.analysis_agent.update_macro,
+            interval_seconds=intervals.macro_data,
+        )
+
+        # Analisis Batch FinBERT (15 menit)
+        self.scheduler.add_fixed_job(
+            name="finbert_batch",
+            func=self.analysis_agent.run_finbert_batch,
+            interval_seconds=intervals.finbert_batch,
+        )
+
+        # Snapshot Saldo & Equity (5 menit)
+        self.scheduler.add_fixed_job(
+            name="balance_snapshot",
+            func=self.paper_engine.position_manager.take_balance_snapshot,
+            interval_seconds=intervals.balance_snapshot,
+        )
+
+    async def _execution_loop(self):
+        """Loop responsif eksekusi order & pemantauan posisi (tiap 0.3 detik untuk scalping)."""
+        logger.info("Execution loop dimulai (scalping mode: 0.3s interval)")
+        while self._running:
+            try:
+                # 1. Jalankan siklus eksekusi untuk proses order tertunda
+                await self.execution_agent.run_cycle()
+                # 2. Pantau SL/TP, likuidasi, auto-close expired, scalp TP
+                await self.execution_agent.check_positions()
+            except Exception as e:
+                logger.error(f"Error pada execution loop: {e}")
+            await asyncio.sleep(0.3)
+
+    async def _candle_refresh_loop(self):
+        """
+        Loop penyegaran candle berkala untuk charting real-time.
+
+        Jendela 1m harus cukup lebar untuk MEMPERBAIKI lubang, bukan sekadar
+        menambah lilin terbaru. Dengan limit kecil, menit yang sempat terlewat
+        (mis. saat proses restart atau jaringan putus) tidak akan pernah kembali
+        dan chart menyisakan celah permanen.
+
+        Lebarnya juga menentukan seberapa tua baris yang bisa DIPERBAIKI. UPSERT
+        hanya menyentuh menit yang ikut diminta, jadi jendela 120 menit berarti
+        baris rusak yang lebih tua dari itu tidak akan pernah direkonsiliasi.
+        Jendela 300 menit memberi ruang perbaikan lima jam sekaligus, sementara
+        jumlah permintaannya tetap satu per simbol per putaran.
+        """
+        while self._running:
+            try:
+                for symbol in self.config.symbols:
+                    await self.price_feed.fetch_ohlcv(symbol, timeframe="1m", limit=300, save_to_db=True)
+                    await self.price_feed.fetch_ohlcv(symbol, timeframe="5m", limit=120, save_to_db=True)
+                # Segarkan juga cache volatilitas. Target TP/SL dinamis
+                # membaca candle 1m dari cache ini, jadi tanpa refresh di
+                # sini ATR akan membeku pada menit pertama boot.
+                await self.paper_engine.refresh_volatility_cache()
+            except Exception as e:
+                logger.debug(f"Penyegaran candle berkala gagal: {e}")
+            await asyncio.sleep(30)
+
+    async def _telemetry_loop(self):
+        """Cetak live status bar ringkas di terminal setiap 30 detik."""
+        await asyncio.sleep(25)
+        while self._running:
+            try:
+                from database.db import get_db
+                db = await get_db()
+                # Baris akun terbaru, bukan id = 1. Setelah reset, baris baru
+                # tidak lagi memakai id 1 sehingga query id = 1 mengembalikan
+                # None dan kartu telemetry diam-diam tidak pernah tampil.
+                acc_row = await db.fetchone(
+                    "SELECT * FROM account ORDER BY id DESC LIMIT 1"
+                )
+                if acc_row:
+                    acc = dict(acc_row)
+                    pos_rows = [dict(r) for r in await db.fetchall("SELECT * FROM positions WHERE status = 'OPEN'")]
+                    open_margin = sum(float(p.get("margin") or 0.0) for p in pos_rows)
+                    upnl = sum(float(p.get("unrealized_pnl") or 0.0) for p in pos_rows)
+                    wallet_bal = acc["balance"] + open_margin
+                    equity = wallet_bal + upnl
+                    total_pnl = equity - acc["initial_balance"]
+                    pnl_color = "\033[1;92m" if total_pnl >= 0 else "\033[1;91m"
+                    pnl_sign = "+" if total_pnl >= 0 else ""
+                    trades = acc.get("total_trades", 0)
+                    wins = acc.get("winning_trades", 0)
+                    wr = (wins / trades * 100) if trades > 0 else 0.0
+
+                    card = (
+                        f"\n\033[38;5;239m┌─ \033[1;36m[LIVE TELEMETRY]\033[0;38;5;239m "
+                        f"────────────────────────────────────────────────────────────────────────┐\n"
+                        f"│ \033[1;37mWALLET\033[0m: ${wallet_bal:,.2f} │ \033[1;37mEQUITY\033[0m: ${equity:,.2f} │ "
+                        f"\033[1;37mTOTAL PNL\033[0m: {pnl_color}{pnl_sign}${total_pnl:,.2f}\033[0;38;5;239m │ "
+                        f"\033[1;37mWIN RATE\033[0m: {wr:.1f}% ({wins}/{trades}) │\n"
+                        f"│ \033[1;37mACTIVE POSITIONS\033[0m: {len(pos_rows)} OPEN (Margin: ${open_margin:,.2f} │ Free Margin: ${acc['balance']:,.2f})        │\n"
+                        f"└───────────────────────────────────────────────────────────────────────────────────────────┘\033[0m\n"
+                    )
+                    _print_safe(card)
+            except Exception:
+                pass
+            await asyncio.sleep(30)
+
+    async def repair_candles(self, window_minutes: int = 600):
+        """
+        Bersihkan dan rekonsiliasi tabel `candles` terhadap bursa.
+
+        Dipakai saat chart menampilkan lilin yang tidak masuk akal. Penyebabnya
+        biasanya baris warisan dari build lama — tersimpan pada presisi float32
+        dengan volume nol — yang tidak pernah bisa diperbaiki oleh UPSERT karena
+        jendela permintaan candleSnapshot hanya selebar beberapa jam.
+
+        Langkah:
+          1. Hapus baris yang melanggar invarian OHLC (tidak mungkin dari bursa).
+          2. Tarik ulang jendela lebar dari Hyperliquid dan tulis dengan UPSERT.
+        """
+        from database.db import get_db
+
+        db = await get_db()
+        where = (
+            "volume < 0 OR open <= 0 OR high <= 0 OR low <= 0 OR close <= 0 "
+            "OR high < low OR high < open OR high < close "
+            "OR low > open OR low > close"
+        )
+
+        before = (await db.fetchone("SELECT COUNT(*) AS n FROM candles"))["n"]
+        bad = (await db.fetchone(f"SELECT COUNT(*) AS n FROM candles WHERE {where}"))["n"]
+        await db.execute(f"DELETE FROM candles WHERE {where}")
+        await db.commit()
+        after = (await db.fetchone("SELECT COUNT(*) AS n FROM candles"))["n"]
+        logger.info(f"Reparasi candle: {bad} baris gagal validasi dihapus ({before} -> {after})")
+
+        await self.price_feed.initialize()
+
+        # Simbol yang diperbaiki harus mencakup SEMUA simbol yang punya baris di
+        # tabel, bukan hanya Top-10 saat ini. Simbol yang tergeser keluar dari
+        # peringkat volume tetap meninggalkan baris rusaknya di database, dan
+        # baris itu akan muncul lagi begitu simbol tersebut dipilih di chart.
+        top = await self.price_feed.discover_top_volume_symbols(limit=10)
+        db_symbols = [
+            r["symbol"] for r in await db.fetchall("SELECT DISTINCT symbol FROM candles")
+        ]
+        symbols = sorted(set(top or []) | set(db_symbols) | set(self.config.symbols))
+        logger.info(f"Reparasi mencakup {len(symbols)} simbol: {symbols}")
+
+        for symbol in symbols:
+            for tf, limit_count in (("1m", window_minutes), ("5m", window_minutes)):
+                try:
+                    candles = await self.price_feed.fetch_ohlcv(
+                        symbol, timeframe=tf, limit=limit_count, save_to_db=True
+                    )
+                    logger.info(f"Reparasi {symbol} {tf}: {len(candles)} lilin bursa ditulis ulang")
+                except Exception as e:
+                    logger.warning(f"Reparasi {symbol} {tf} gagal: {e}")
+            await asyncio.sleep(0.2)
+
+        remaining = (await db.fetchone(f"SELECT COUNT(*) AS n FROM candles WHERE {where}"))["n"]
+        total = (await db.fetchone("SELECT COUNT(*) AS n FROM candles"))["n"]
+        logger.info(f"Reparasi selesai: {total} baris total, {remaining} masih gagal validasi")
+
+        await self.price_feed.close()
+        await close_db()
+
+    def start_dashboard(self):
+        """Jalankan dashboard Dash di thread terpisah."""
+        cfg = self.config.dashboard
+        dash_thread = threading.Thread(
+            target=run_dashboard,
+            name="DashBoardThread",
+            daemon=True,
+        )
+        dash_thread.start()
+        logger.info(f"Dashboard visual aktif di http://{cfg.host}:{cfg.port}")
+
+    async def run(self):
+        """Mulai semua loop dan scheduler."""
+        self._running = True
+
+        # Mulai scheduler
+        stage("Starting scheduler", total=2)
+        self.setup_scheduler()
+        step(label="Starting scheduler · jobs")
+        self.scheduler.start()
+        step(label="Starting scheduler · running")
+        stage_done("Scheduler aktif")
+
+        # Jalankan dashboard
+        stage("Starting dashboard")
+        self.start_dashboard()
+        stage_done(
+            f"Dashboard http://{self.config.dashboard.host}:"
+            f"{self.config.dashboard.port}"
+        )
+
+        # Mulai background task
+        stage("Starting trading engine", total=5)
+        price_task = asyncio.create_task(self.price_feed.price_update_loop())
+        step(label="Starting trading engine · price feed")
+        exec_task = asyncio.create_task(self._execution_loop())
+        step(label="Starting trading engine · execution")
+        candle_task = asyncio.create_task(self._candle_refresh_loop())
+        step(label="Starting trading engine · candle refresh")
+        telem_task = asyncio.create_task(self._telemetry_loop())
+        step(label="Starting trading engine · telemetry")
+        # Loop pemangkasan snapshot. Job APScheduler dengan interval satu jam
+        # saja belum menyentuh apa pun selama jam pertama boot — padahal
+        # itulah jendela saat tabel tumbuh paling cepat. Loop ini menutup
+        # celah itu, dan `_prune_direction_snapshots` bersifat idempoten
+        # sehingga dua pemanggil tidak saling mengganggu.
+        maintenance_task = asyncio.create_task(self._maintenance_loop())
+        step(label="Starting trading engine · db maintenance")
+        self._background_tasks.extend(
+            [price_task, exec_task, candle_task, telem_task, maintenance_task]
+        )
+        stage_done("Trading engine berjalan")
+
+        # Tahap startup selesai: kembalikan terminal ke mode normal supaya
+        # peristiwa runtime (trade, warning, error) tetap terlihat.
+        end_quiet_mode()
+        print()
+        print(f"  [38;5;48m* RUNNING[0m  dashboard "
+              f"http://{self.config.dashboard.host}:{self.config.dashboard.port}"
+              f"  -  Ctrl+C untuk berhenti\n")
+
+        # Tunggu sampai dihentikan
+        while self._running:
+            await asyncio.sleep(1)
+
+    async def shutdown(self):
+        """Hentikan sistem secara aman (Graceful Shutdown)."""
+        logger.info("Menghentikan sistem trading bot...")
+        self._running = False
+
+        # Hentikan scheduler
+        if self.scheduler.running:
+            self.scheduler.shutdown()
+
+        # Hentikan price feed
+        self.price_feed.stop()
+
+        # Batalkan background tasks
+        for task in self._background_tasks:
+            task.cancel()
+
+        # Tutup koneksi exchange & database
+        await self.price_feed.close()
+        await close_db()
+
+        logger.info("Sistem trading bot berhasil dinonaktifkan.")
+
+
+async def main():
+    """Fungsi utama."""
+    print_banner()
+    setup_logger()
+
+    # Menu mode. WAJIB lebih dulu, sebelum satu pun subsystem dinyalakan,
+    # karena keputusan ini menentukan engine mana yang dipakai.
+    decision = _choose_mode()
+    app = TradingBotApp(decision)
+
+    loop = asyncio.get_running_loop()
+
+    # Tangani sinyal penghentian di platform yang mendukung
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(app.shutdown()))
+        except NotImplementedError:
+            # Windows tidak mendukung add_signal_handler penuh di asyncio
+            pass
+
+    try:
+        await app.initialize()
+        await app.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("Sinyal henti diterima dari pengguna.")
+    finally:
+        await app.shutdown()
+
+
+if __name__ == "__main__":
+    # Mode satu kali: `python run.py --repair-candles` membersihkan tabel candles
+    # lalu keluar, tanpa menjalankan agen atau dashboard. Tidak ada menu mode
+    # di sini — perintah ini tidak pernah bertransaksi sama sekali.
+    if "--repair-candles" in sys.argv:
+        async def _repair():
+            setup_logger()
+            app = TradingBotApp()
+            await init_db()
+            await app.repair_candles()
+
+        asyncio.run(_repair())
+        sys.exit(0)
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except RuntimeError as exc:
+        # Kegagalan konfigurasi live (kunci privat kosong, health check
+        # gagal saat start) dilempar sebagai RuntimeError dengan pesan yang
+        # bisa dibaca operator.
+        #
+        # Tanpa blok ini, operator hanya melihat traceback Python --
+        # yang tidak menjelaskan apakah ini masalah konfigurasi atau
+        # bug, dan pesan aslinya hilang. Itu sebabnya blok ini wajib:
+        # keamanan bukan soal exception, tapi soal pesan yang sampai
+        # ke orang yang menjalankan.
+        _print_safe("")
+        _print_safe("  BOT TIDAK DIJALANKAN.")
+        _print_safe("  Alasan: {}".format(exc))
+        _print_safe("")
+        sys.exit(2)

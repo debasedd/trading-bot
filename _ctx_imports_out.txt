@@ -1,0 +1,81 @@
+﻿python : <unknown>:16: SyntaxWarning: "\" is an invalid escape sequence. Such sequences will not work in the future. 
+Did you mean "\\"? A raw string is also an option.
+At line:1 char:349
++ ... rading-bot; python _ctx_imports.py > _ctx_imports_out.txt 2>&1; Write ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (<unknown>:16: S...also an option.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+=== MODULE-LEVEL EDGES ===
+agents.analysis_agent -> ['agents.base_agent', 'analysis.fundamental', 'analysis.ml_signals', 'analysis.technical', 'core.config', 'core.event_bus', 'core.logger', 'data.macro_fetcher', 'data.price_feed', 'data.sentiment', 'database.models']
+agents.base_agent -> ['core.event_bus', 'core.logger', 'database.db', 'database.models', 'database.repository']
+agents.decision_agent -> ['agents.base_agent', 'core.config', 'core.event_bus', 'core.logger', 'core.market_store', 'core.scheduler', 'core.utils', 'database.models', 'trading.models', 'trading.risk_manager']
+agents.direction_agents -> ['agents.base_agent', 'analysis.direction_ensemble', 'analysis.technical', 'core.config', 'core.market_store']
+agents.execution_agent -> ['agents.base_agent', 'core.config', 'core.event_bus', 'core.logger', 'core.market_store', 'core.utils', 'trading.models', 'trading.risk_manager']
+agents.news_agent -> ['agents.base_agent', 'core.event_bus', 'core.logger', 'data.news_fetcher', 'data.sentiment', 'database.models']
+analysis.backtester -> ['core.config', 'core.logger']
+analysis.fundamental -> ['core.logger']
+analysis.ml_signals -> ['core.config', 'core.logger']
+analysis.probability_engine -> ['core']
+analysis.technical -> ['core.config', 'core.logger']
+analysis.vol_target -> ['core.config', 'core.logger', 'core.market_store']
+analysis.volatility -> ['core.config', 'core.logger', 'core.market_store']
+core.event_bus -> ['core.logger']
+core.logger -> ['core.config']
+core.microstructure -> ['core.logger']
+core.scheduler -> ['core.config', 'core.logger']
+dashboard.app -> ['core.config', 'core.logger', 'dashboard.callbacks', 'dashboard.layouts']
+dashboard.callbacks.update_callbacks -> ['analysis.probability_engine', 'analysis.technical', 'core.config', 'core.logger', 'core.market_store', 'dashboard.layouts']
+dashboard.layouts.hud -> ['dashboard.layouts']
+dashboard.layouts.hud_figures -> ['dashboard.layouts']
+dashboard.layouts.performance -> ['dashboard.layouts']
+dashboard.layouts.price_chart -> ['core.config', 'dashboard.layouts']
+data.hyperliquid_feed -> ['core', 'core.logger', 'core.market_store']
+data.macro_fetcher -> ['core.config', 'core.logger', 'database.models']
+data.news_fetcher -> ['core.config', 'core.logger', 'database.models']
+data.price_feed -> ['core.config', 'core.event_bus', 'core.logger', 'data.hyperliquid_feed']
+data.sentiment -> ['core.logger']
+database.db -> ['core.config', 'core.logger']
+database.repository -> ['core.logger', 'database.db', 'database.models']
+ml.predictor -> ['analysis.ml_signals', 'core.logger']
+ml.trainer -> ['core.logger']
+trading.live.client -> ['core.logger']
+trading.live.console -> ['core.logger']
+trading.live.engine -> ['core.config', 'core.logger', 'trading.live']
+trading.live.executor -> ['core.logger', 'core.market_store', 'trading.live']
+trading.live.safety -> ['core.config', 'core.logger']
+trading.paper_engine -> ['core.config', 'core.event_bus', 'core.logger', 'core.market_store', 'database.db', 'database.models', 'database.repository', 'trading.models', 'trading.position_manager', 'trading.risk_manager']
+trading.position_manager -> ['core.config', 'core.event_bus', 'core.logger', 'core.market_store', 'database.db', 'database.models', 'database.repository', 'trading.models', 'trading.risk_manager']
+trading.risk_manager -> ['core.config', 'core.logger', 'trading.models']
+
+=== DEFERRED (function/class-local) EDGES ===
+agents.direction_agents -> ['analysis.probability_engine']
+agents.execution_agent -> ['analysis']
+dashboard.callbacks.update_callbacks -> ['data.price_feed']
+dashboard.layouts.hud_figures -> ['analysis.probability_engine']
+data.price_feed -> ['core.market_store', 'database.db', 'database.models', 'database.repository']
+trading.live.console -> ['trading.live']
+trading.live.executor -> ['trading.models']
+trading.paper_engine -> ['analysis']
+
+=== FAN-IN (module-level) ===
+33 core.logger
+23 core.config
+10 core.market_store
+9 database.models
+8 core.event_bus
+6 dashboard.layouts
+5 agents.base_agent
+5 trading.models
+4 database.db
+4 trading.risk_manager
+3 analysis.technical
+3 database.repository
+2 data.sentiment
+2 analysis.ml_signals
+2 core.utils
+2 core
+2 trading.live
+1 data.macro_fetcher
+1 data.price_feed
+1 analysis.fundamental

@@ -1,0 +1,319 @@
+
+########## core/config.py  (805 lines) ##########
+   13  CLASS  @dataclass
+   13  CLASS  class AccountConfig()
+   14    ANNF initial_balance: float = 10000.0
+   15    ANNF currency: str = 'USDT'
+   19  CLASS  @dataclass
+   19  CLASS  class RiskConfig()
+   20    ANNF max_risk_per_trade: float = 0.02
+   21    ANNF max_leverage: int = 20
+   22    ANNF max_daily_loss: float = 0.05
+   23    ANNF max_drawdown: float = 0.15
+   24    ANNF max_open_positions: int = 3
+   25    ANNF default_leverage: int = 5
+   29  CLASS  @dataclass
+   29  CLASS  class FeeConfig()
+   30    ANNF maker: float = 0.0002
+   31    ANNF taker: float = 0.0005
+   35  CLASS  @dataclass
+   35  CLASS  class AgentIntervals()
+   36    ANNF news_agent: int = 300
+   37    ANNF news_agent_us_open: int = 120
+   38    ANNF analysis_agent: int = 300
+   39    ANNF analysis_agent_us_open: int = 180
+   40    ANNF decision_agent: int = 60
+   41    ANNF decision_agent_us_open: int = 30
+   42    ANNF finbert_batch: int = 900
+   43    ANNF macro_data: int = 21600
+   44    ANNF funding_rate: int = 28800
+   45    ANNF balance_snapshot: int = 300
+   49  CLASS  @dataclass
+   49  CLASS  class USMarketConfig()
+   50    ANNF timezone: str = 'US/Eastern'
+   51    ANNF open_hour: int = 9
+   52    ANNF open_minute: int = 30
+   53    ANNF close_hour: int = 16
+   57  CLASS  @dataclass
+   57  CLASS  class IndicatorConfig()
+   58    ANNF rsi_period: int = 14
+   59    ANNF macd_fast: int = 12
+   60    ANNF macd_slow: int = 26
+   61    ANNF macd_signal: int = 9
+   62    ANNF bollinger_period: int = 20
+   63    ANNF bollinger_std: int = 2
+   64    ANNF ema_short: int = 9
+   65    ANNF ema_long: int = 21
+   69  CLASS  @dataclass
+   69  CLASS  class DashboardConfig()
+   70    ANNF host: str = '127.0.0.1'
+   71    ANNF port: int = 8050
+   72    ANNF debug: bool = False
+   73    ANNF update_interval: int = 2000
+   77  CLASS  @dataclass
+   77  CLASS  class LoggingConfig()
+   78    ANNF level: str = 'INFO'
+   79    ANNF file: str = 'data_store/logs/trading_bot.log'
+   80    ANNF max_bytes: int = 10485760
+   81    ANNF backup_count: int = 5
+   85  CLASS  @dataclass
+   85  CLASS  class ExchangeConfig()
+   86    ANNF name: str = 'binance'
+   87    ANNF type: str = 'future'
+   88    ANNF sandbox: bool = True
+   92  CLASS  @dataclass
+   92  CLASS  class ScanningConfig()
+   93    ANNF dynamic_top_volume: bool = True
+   94    ANNF top_n: int = 10
+   95    ANNF refresh_interval: int = 3600
+   99  CLASS  @dataclass
+   99  CLASS  class ScalpingConfig()
+  100    ANNF enabled: bool = True
+  104    ANNF min_profit_pct: float = 0.006
+  105    ANNF max_hold_seconds: int = 300
+  106    ANNF min_hold_seconds: int = 15
+  107    ANNF batch_size: int = 2
+  109    ANNF fast_tp_pct: float = 0.006
+  110    ANNF tight_sl_pct: float = 0.0025
+  111    ANNF min_confidence: float = 0.4
+  118    ANNF reversal_close_threshold: float = 0.7
+  134    ANNF max_tick_age_seconds: float = 1.5
+  135    ANNF stale_tick_window_seconds: float = 3.0
+  136    ANNF stale_tick_min_samples: int = 5
+  139    ANNF orderbook_imbalance_threshold: float = 0.6
+  140    ANNF momentum_threshold: float = 0.0008
+  141    ANNF max_spread_pct: float = 0.0006
+  148    ANNF breakeven_trigger_pct: float = 0.002
+  149    ANNF breakeven_offset_pct: float = 0.0015
+  154    ANNF cooldown_after_close_seconds: float = 20.0
+  155    ANNF cooldown_after_loss_seconds: float = 90.0
+  159  CLASS  @dataclass
+  159  CLASS  class DynamicTpSlConfig()
+  174    ANNF enabled: bool = True
+  179    ANNF atr_multiple: float = 1.5
+  180    ANNF atr_period: int = 14
+  185    ANNF min_sl_pct: float = 0.0025
+  186    ANNF max_sl_pct: float = 0.015
+  190    ANNF min_risk_reward: float = 1.5
+  193    ANNF realized_window_seconds: float = 30.0
+  199    ANNF max_breakeven_win_rate: float = 0.65
+  200    ANNF fast_tp_pct: float = 0.006
+  201    ANNF tight_sl_pct: float = 0.0025
+  202    ANNF min_confidence: float = 0.4
+  203    ANNF orderbook_imbalance_threshold: float = 0.6
+  204    ANNF momentum_threshold: float = 0.0008
+  205    ANNF max_spread_pct: float = 0.0006
+  208    ANNF breakeven_trigger_pct: float = 0.002
+  209    ANNF breakeven_offset_pct: float = 0.0015
+  214    ANNF cooldown_after_close_seconds: float = 20.0
+  215    ANNF cooldown_after_loss_seconds: float = 90.0
+  219  CLASS  @dataclass
+  219  CLASS  class EnsembleAgentConfig()
+  222    ANNF enabled: bool = True
+  223    ANNF weight: float = 0.25
+  227  CLASS  @dataclass
+  227  CLASS  class EnsembleConfig()
+  238    ANNF enabled: bool = True
+  239    ANNF interval_seconds: int = 5
+  243    ANNF shrinkage_delta: float = 0.85
+  246    ANNF agreement_bonus: float = 0.5
+  248    ANNF min_prob: float = 0.02
+  251    ANNF max_snapshot_age_seconds: int = 20
+  253    ANNF diffusion_horizon_minutes: int = 30
+  254    ANNF diffusion_points: int = 60
+  256    ANNF momentum_window_seconds: float = 30.0
+  258    ANNF min_trades_for_microstructure: int = 8
+  260    ANNF min_returns_for_vol: int = 20
+  261    ANNF orderflow: EnsembleAgentConfig = field(default_factory=lambda: EnsembleAgentConfig(weight=0.3))
+  264    ANNF momentum: EnsembleAgentConfig = field(default_factory=lambda: EnsembleAgentConfig(weight=0.25))
+  267    ANNF technical: EnsembleAgentConfig = field(default_factory=lambda: EnsembleAgentConfig(weight=0.25))
+  270    ANNF microstructure: EnsembleAgentConfig = field(default_factory=lambda: EnsembleAgentConfig(weight=0.2))
+  274    METH def agent_configs(self) -> dict
+  283    METH def base_weight(self, agent_name: str) -> float
+  292  CLASS  @dataclass
+  292  CLASS  class LiveConfig()
+  307    ANNF enabled: bool = False
+  311    ANNF testnet: bool = True
+  315    ANNF private_key_env: str = 'HYPERLIQUID_PRIVATE_KEY'
+  319    ANNF live_confirm_env: str = 'TRADEBOT_LIVE_CONFIRMED'
+  325    ANNF live_window_utc: Tuple[int, int] = (13, 23)
+  333    ANNF max_leverage: int = 10
+  335    ANNF max_order_notional: float = 100.0
+  336    ANNF max_position_notional: float = 300.0
+  337    ANNF max_total_notional: float = 600.0
+  338    ANNF max_daily_orders: int = 200
+  339    ANNF max_daily_loss: float = 50.0
+  340    ANNF max_consecutive_errors: int = 3
+  341    ANNF min_free_collateral: float = 100.0
+  347    ANNF use_exchange_side_tpsl: bool = True
+  353    ANNF auto_reconcile: bool = False
+  356    ANNF reconciliation_tolerance_days: int = 0
+  360  CLASS  @dataclass
+  360  CLASS  class AppConfig()
+  361    ANNF account: AccountConfig = field(default_factory=AccountConfig)
+  362    ANNF symbols: List[str] = field(default_factory=lambda: ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'BNB/USDT:USDT', 'DOGE/USDT:USDT', 'ADA/USDT:USDT', 'AVAX/USDT:USDT', 'LINK/USDT:USDT', 'NEAR/USDT:USDT'])
+  374    ANNF exchange: ExchangeConfig = field(default_factory=ExchangeConfig)
+  375    ANNF scanning: ScanningConfig = field(default_factory=ScanningConfig)
+  376    ANNF scalping: ScalpingConfig = field(default_factory=ScalpingConfig)
+  377    ANNF ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
+  378    ANNF risk: RiskConfig = field(default_factory=RiskConfig)
+  379    ANNF fees: FeeConfig = field(default_factory=FeeConfig)
+  380    ANNF live: LiveConfig = field(default_factory=LiveConfig)
+  381    ANNF agent_intervals: AgentIntervals = field(default_factory=AgentIntervals)
+  382    ANNF us_market: USMarketConfig = field(default_factory=USMarketConfig)
+  383    ANNF indicators: IndicatorConfig = field(default_factory=IndicatorConfig)
+  384    ANNF dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+  385    ANNF logging: LoggingConfig = field(default_factory=LoggingConfig)
+  386    ANNF database_path: str = 'data_store/trading_bot.db'
+  387    ANNF dynamic_tp_sl: DynamicTpSlConfig = field(default_factory=DynamicTpSlConfig)
+  392    ANNF snapshot_prune_interval: int = 3600
+  393    ANNF snapshot_keep_per_symbol: int = 120
+  398    ANNF agent_log_prune_interval: int = 1800
+  399    ANNF agent_log_keep: int = 5000
+  400    ANNF news_rss: List[str] = field(default_factory=lambda: ['https://www.coindesk.com/arc/outboundfeeds/rss/', 'https://cointelegraph.com/rss'])
+  404    ANNF cryptopanic_url: str = 'https://cryptopanic.com/api/free/v1/posts/'
+  405    ANNF cryptopanic_token: Optional[str] = None
+  408  FUNC   def _apply_dict(obj, data: dict)
+  415  FUNC   def load_config(path: str = "config.yaml") -> AppConfig
+  531  FUNC   def _validate_dynamic_tp_sl(config: AppConfig) -> None
+  630  FUNC   def _validate_ensemble_config(config: AppConfig) -> None
+  707  FUNC   def _validate_scalping_economics(config: AppConfig) -> None
+  790  CONST  _config: Optional[AppConfig] = None
+  793  FUNC   def get_config() -> AppConfig
+  801  FUNC   def reload_config(path: str = "config.yaml") -> AppConfig
+
+########## core/event_bus.py  (103 lines) ##########
+   14  CONST  logger = get_logger('event_bus')
+   18  CLASS  @dataclass
+   18  CLASS  class Event()
+   20    ANNF channel: str
+   21    ANNF data: Any
+   22    ANNF source: str = ''
+   23    ANNF timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+   26  CLASS  class EventBus()
+   37    METH def __init__(self, maxsize: int = 1000)
+   42    METH async def subscribe(self, channel: str) -> asyncio.Queue
+   52    METH async def unsubscribe(self, channel: str, queue: asyncio.Queue)
+   62    METH async def publish(self, channel: str, data: Any, source: str = "")
+   86    METH def get_channel_stats(self) -> Dict[str, int]
+   92  CLASS  class Channels()
+   94    ASGN PRICE_UPDATE = 'price_update'
+   95    ASGN NEWS_SENTIMENT = 'news_sentiment'
+   96    ASGN MARKET_ANALYSIS = 'market_analysis'
+   97    ASGN TRADE_DECISION = 'trade_decision'
+   98    ASGN TRADE_EXECUTED = 'trade_executed'
+   99    ASGN POSITION_UPDATE = 'position_update'
+  100    ASGN BALANCE_UPDATE = 'balance_update'
+  101    ASGN AGENT_LOG = 'agent_log'
+  102    ASGN SYSTEM_EVENT = 'system_event'
+  103    ASGN DIRECTION_ENSEMBLE = 'direction_ensemble'
+
+########## core/logger.py  (403 lines) ##########
+   18  CONST  RESET = '\x1b[0m'
+   19  CONST  BOLD = '\x1b[1m'
+   20  CONST  DIM = '\x1b[2m'
+   23  CONST  CYAN = '\x1b[38;5;51m'
+   24  CONST  BRIGHT_BLUE = '\x1b[38;5;75m'
+   25  CONST  GREEN = '\x1b[38;5;48m'
+   26  CONST  AMBER = '\x1b[38;5;214m'
+   27  CONST  RED = '\x1b[38;5;196m'
+   28  CONST  PURPLE = '\x1b[38;5;141m'
+   29  CONST  GRAY = '\x1b[38;5;244m'
+   30  CONST  DARK_GRAY = '\x1b[38;5;238m'
+   31  CONST  WHITE = '\x1b[38;5;255m'
+   33  CONST  LEVEL_BADGES = {'DEBUG': f'{GRAY}[DEBUG]{RESET}', 'INFO': f'{GREEN}[INFO ]{RESET}', 'WARNING': f'{AMBER}[WARN ]{RESET}', 'ERROR': f'{RED}{BOLD}[ERROR]{RESET}', 'CRITICAL': f'{RED}{BOLD}[CRIT ]{RESET}'}
+   41  CONST  MODULE_COLORS = {'main': CYAN, 'decision_agent': PURPLE, 'execution_agent': AMBER, 'analysis_agent': BRIGHT_BLUE, 'news_agent': '\x1b[38;5;220m', 'paper_engine': GREEN, 'position_manager': GREEN, 'price_feed': CYAN, 'hyperliquid_feed': CYAN, 'risk_manager': RED, 'scheduler': BRIGHT_BLUE}
+   56  CLASS  class ColoredConsoleFormatter(logging.Formatter)
+   59    METH def format(self, record: logging.LogRecord) -> str
+  105  CONST  NEWLINE = '\r'
+  106  CONST  _QUIET = os.environ.get('TRADEBOT_QUIET_STARTUP', '').strip() in ('1', 'true', 'True', 'yes')
+  109  CONST  _QUIET_LOGGER: logging.Logger = None
+  123  FUNC   def _make_progress_aware_emit(original_emit)
+  155  FUNC   def setup_logger(name: str = "trading_bot") -> logging.Logger
+  218  FUNC   def begin_quiet_mode(name: str = "trading_bot")
+  225  FUNC   def end_quiet_mode()
+  236  CONST  _BAR_WIDTH = 28
+  240  CONST  _STAGE_COLORS = {'Preparing': '\x1b[38;5;244m', 'Connecting': '\x1b[38;5;51m', 'Scanning': '\x1b[38;5;51m', 'Opening': '\x1b[38;5;51m', 'Loading': '\x1b[38;5;220m', 'Fetching': '\x1b[38;5;220m', 'Reading': '\x1b[38;5;220m', 'Starting': '\x1b[38;5;141m'}
+  254  CONST  _stage_active = {'label': None, 'done': 0, 'total': 0, 'color': '\x1b[0m', '_paused': False, '_started': False}
+  258  FUNC   def _stage_color(label: str) -> str
+  265  FUNC   def _render_bar(label, done, total, color, width=_BAR_WIDTH)
+  279  FUNC   def stage(label: str, total: int = 0)
+  316  FUNC   def step(done: int = None, label: str = None)
+  336  FUNC   def _draw_stage()
+  361  FUNC   def stage_done(message: str = None, label: str = None)
+  391  FUNC   def is_quiet() -> bool
+  396  FUNC   def get_logger(module_name: str) -> logging.Logger
+
+########## core/market_store.py  (265 lines) ##########
+   19  CONST  PRICE_HISTORY_MAX = 240
+   22  CLASS  class MarketStore()
+   25    METH def __init__(self)
+   39    METH def set_price(self, symbol: str, price: float)
+   55    METH def set_ticker(self, symbol: str, ticker: dict)
+   64    METH def get_ticker(self, symbol: str) -> Optional[dict]
+   74    METH def get_price(self, symbol: str) -> Optional[float]
+   91    METH def get_price_age(self, symbol: str) -> Optional[float]
+  101    METH def get_all_prices(self) -> Dict[str, float]
+  105    METH def get_price_history(self, symbol: str, seconds: Optional[float] = None) -> List[tuple]
+  128    METH def get_price_change(self, symbol: str, seconds: float = 60.0) -> Optional[float]
+  147    METH def set_order_book(self, symbol: str, order_book: dict)
+  152    METH def get_order_book(self, symbol: str) -> Optional[dict]
+  167    METH def has_order_book(self, symbol: str) -> bool
+  171    METH def get_order_book_age(self, symbol: str) -> Optional[float]
+  187    METH def set_live_candle(self, symbol: str, candle: dict)
+  198    METH def get_live_candle(self, symbol: str) -> Optional[dict]
+  211    METH def set_funding(self, symbol: str, funding_rate: float)
+  218    METH def get_funding(self, symbol: str) -> Optional[float]
+  228    METH def set_open_interest(self, symbol: str, open_interest: float)
+  235    METH def get_open_interest(self, symbol: str) -> Optional[float]
+  248    METH def set_recent_trades(self, symbol: str, trades: list)
+  253    METH def get_recent_trades(self, symbol: str) -> list
+  265  CONST  market_store = MarketStore()
+
+########## core/microstructure.py  (369 lines) ##########
+   54  CONST  logger = get_logger('microstructure')
+   57  CLASS  class MicrostructureKernel(ABC)
+   67    METH def ingest_l2(self, symbol: str, bids: list, asks: list) -> None
+   71    METH def order_flow_imbalance(
+   77    METH def depth_imbalance(self, symbol: str, depth: int = 5) -> float
+   81  CLASS  class PythonKernel(MicrostructureKernel)
+  105    METH def __init__(self, max_symbols: int = 64)
+  109    METH def ingest_l2(self, symbol: str, bids: list, asks: list) -> None
+  123    METH def _weighted_volume(levels: list, depth: int) -> float
+  130    METH def order_flow_imbalance(
+  160    METH def depth_imbalance(self, symbol: str, depth: int = 5) -> float
+  172    METH def reset(self, symbol: Optional[str] = None) -> None
+  182  CONST  _KERNEL: MicrostructureKernel = PythonKernel()
+  185  FUNC   def get_kernel() -> MicrostructureKernel
+  190  FUNC   def register_kernel(kernel: MicrostructureKernel) -> None
+  218  FUNC   def ingest_l2(symbol: str, bids: list, asks: list) -> None
+  223  FUNC   def order_flow_imbalance(
+  230  FUNC   def depth_imbalance(symbol: str, depth: int = 5) -> float
+  235  FUNC   def reset_microstructure(symbol: Optional[str] = None) -> None
+  245  FUNC   def cpp_kernel_available() -> bool
+  260  CLASS  class CppMicrostructureKernel(MicrostructureKernel)
+  276    METH def __init__(self, max_symbols: int = 64, native_module=None)
+  281    METH def ingest_l2(self, symbol: str, bids: list, asks: list) -> None
+  284    METH def order_flow_imbalance(
+  290    METH def depth_imbalance(self, symbol: str, depth: int = 5) -> float
+  293    METH def reset(self, symbol: Optional[str] = None) -> None
+  296    METH def ingest_json(self, payload: bytes)
+  305    METH def symbol_count(self) -> int
+  309  FUNC   def initialize_native_kernel(force: bool = False) -> bool
+
+########## core/scheduler.py  (139 lines) ##########
+   16  CONST  logger = get_logger('scheduler')
+   19  FUNC   def is_us_market_open() -> bool
+   36  CLASS  class AgentScheduler()
+   46    METH def __init__(self)
+   51    METH def add_agent_job(
+   88    METH def add_fixed_job(self, name: str, func: Callable, interval_seconds: int)
+  100    METH async def _adjust_intervals(self)
+  118    METH def start(self)
+  132    METH def shutdown(self)
+  138    METH def running(self) -> bool
+
+########## core/utils.py  (31 lines) ##########
+    9  FUNC   def parse_db_timestamp(ts_val: Any) -> float
+
+########## core/__init__.py  (1 lines) ##########

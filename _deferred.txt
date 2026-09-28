@@ -1,0 +1,44 @@
+﻿python : <unknown>:16: SyntaxWarning: "\" is an invalid escape sequence. Such sequences will not work in the future. 
+Did you mean "\\"? A raw string is also an option.
+At line:1 char:349
++ ... s\maman\Desktop\Project\trading-bot; python _imports2.py 2>&1 | Out-F ...
++                                          ~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (<unknown>:16: S...also an option.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+agents\direction_agents.py                   @115   in _evaluate              analysis.probability_engine
+agents\direction_agents.py                   @216   in _evaluate              analysis.probability_engine
+agents\direction_agents.py                   @483   in _evaluate_symbol       analysis.probability_engine
+agents\execution_agent.py                    @117   in think                  analysis
+dashboard\callbacks\update_callbacks.py      @958   in update_neural_net      data.price_feed
+dashboard\layouts\hud_figures.py             @223   in create_convergence_fig analysis.probability_engine
+data\price_feed.py                           @240   in fetch_ohlcv            database.db
+data\price_feed.py                           @241   in fetch_ohlcv            database.repository
+data\price_feed.py                           @242   in fetch_ohlcv            database.models
+data\price_feed.py                           @394   in fetch_ticker           core.market_store
+data\price_feed.py                           @424   in fetch_funding_rate     core.market_store
+data\price_feed.py                           @523   in fetch_order_book       core.market_store
+data\price_feed.py                           @582   in price_update_loop      core.market_store
+data\price_feed.py                           @593   in price_update_loop      core.market_store
+trading\paper_engine.py                      @112   in _register_candle_source analysis
+trading\paper_engine.py                      @295   in _resolve_tp_sl         analysis
+trading\live\console.py                      @180   in interactive            trading.live
+trading\live\console.py                      @196   in _pause                 trading.live
+trading\live\console.py                      @240   in mode_options           trading.live.tui
+trading\live\console.py                      @417   in ask_mode               trading.live
+trading\live\console.py                      @464   in _do_confirmations      trading.live
+trading\live\console.py                      @567   in rule_options           trading.live.tui
+trading\live\console.py                      @596   in edit_rules             trading.live
+trading\live\console.py                      @624   in _edit_field_tui        trading.live
+trading\live\console.py                      @664   in edit_rules_plain       trading.live.tui
+trading\live\executor.py                     @68    in execute_order          trading.models
+trading\live\executor.py                     @78    in _open                  trading.models
+run.py                                       @169   in _choose_mode           trading.live.console
+run.py                                       @196   in _choose_mode           trading.live.console
+run.py                                       @256   in _build_live_executor   core.config
+run.py                                       @257   in _build_live_executor   trading.live.client
+run.py                                       @258   in _build_live_executor   trading.live.engine
+run.py                                       @259   in _build_live_executor   trading.live.executor
+run.py                                       @260   in _build_live_executor   trading.live.safety
+run.py                                       @633   in _telemetry_loop        database.db
+run.py                                       @682   in repair_candles         database.db

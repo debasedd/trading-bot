@@ -1,0 +1,283 @@
+
+########## agents/__init__.py  (1 lines) ##########
+
+########## agents/analysis_agent.py  (318 lines) ##########
+   24  CONST  logger = get_logger('analysis_agent')
+   27  CLASS  class AnalysisAgent(BaseAgent)
+   37    METH def __init__(
+   58    METH async def initialize(self)
+   64    METH async def sense(self) -> dict
+   91    METH async def think(self, data: dict) -> dict
+  171    METH async def act(self, analysis: dict)
+  200    METH async def update_macro(self)
+  222    METH async def run_finbert_batch(self)
+  262    METH def _combine_signals(
+
+########## agents/base_agent.py  (151 lines) ##########
+   20  CLASS  class BaseAgent(ABC)
+   30    METH def __init__(self, name: str, event_bus: EventBus)
+   38    METH async def _get_repo(self) -> Repository
+   45    METH async def sense(self) -> dict
+   55    METH async def think(self, data: dict) -> dict
+   68    METH async def act(self, analysis: dict)
+   77    METH async def run_cycle(self)
+  119    METH async def _log_cycle(self, analysis: dict)
+  136    METH async def _log_error(self, error_msg: str)
+  149    METH async def publish(self, channel: str, data: dict)
+
+########## agents/decision_agent.py  (380 lines) ##########
+   23  CONST  logger = get_logger('decision_agent')
+   26  CLASS  class DecisionAgent(BaseAgent)
+   36    METH def __init__(self, event_bus: EventBus, risk_manager: RiskManager)
+   48    METH async def initialize(self)
+   53    METH async def sense(self) -> dict
+   91    METH async def think(self, data: dict) -> dict
+  257    METH async def act(self, analysis: dict)
+  289    METH async def _generate_scalp_signals(
+  340    METH def _snapshot_is_fresh(self, created_at) -> bool
+  349    METH def _snapshot_agreement(snap: Dict) -> str
+  374    METH def _determine_leverage(self, risk_level: str) -> int
+
+########## agents/direction_agents.py  (525 lines) ##########
+   42  CLASS  class DirectionAgent(BaseAgent)
+   51    ASGN agent_name = 'direction'
+   53    METH def __init__(self, event_bus)
+   58    METH async def initialize(self)
+   62    METH def evaluate(self, symbol: str) -> dict
+   87    METH def _evaluate(self, symbol: str)
+   93    METH async def sense(self) -> dict
+   96    METH async def think(self, data: dict) -> dict
+   99    METH async def act(self, analysis: dict)
+  103  CLASS  class OrderFlowAgent(DirectionAgent)
+  112    ASGN agent_name = 'orderflow'
+  114    METH def _evaluate(self, symbol: str)
+  148  CLASS  class MomentumAgent(DirectionAgent)
+  156    ASGN agent_name = 'momentum'
+  158    METH def _evaluate(self, symbol: str)
+  184  CLASS  class TechnicalAgent(DirectionAgent)
+  193    ASGN agent_name = 'technical'
+  195    METH def __init__(self, event_bus, db_path: str)
+  200    METH async def evaluate_async(self, symbol: str) -> dict
+  215    METH def _evaluate(self, symbol: str)
+  256  CLASS  class MicrostructureAgent(DirectionAgent)
+  264    ASGN agent_name = 'microstructure'
+  266    METH def _evaluate(self, symbol: str)
+  320  FUNC   def _safe_float(value) -> Optional[float]
+  331  FUNC   def _load_closes(db_path: str, symbol: str, limit: int = 100) -> List[dict]
+  367  FUNC   def _signed_volume(tape: list)
+  401  CLASS  class DirectionEnsembleAgent(BaseAgent)
+  410    METH def __init__(self, event_bus, symbols: List[str], db_path: str)
+  418    METH async def initialize(self)
+  437    METH async def run_cycle(self)
+  455    METH async def sense(self) -> dict
+  458    METH async def think(self, data: dict) -> dict
+  461    METH async def act(self, analysis: dict)
+  464    METH async def _evaluate_symbol(self, symbol: str) -> Optional[dict]
+  505    METH async def _realized_vol(self, symbol: str) -> Optional[float]
+
+########## agents/execution_agent.py  (318 lines) ##########
+   23  CONST  logger = get_logger('execution_agent')
+   26  CLASS  class ExecutionAgent(BaseAgent)
+   37    METH def __init__(self, event_bus: EventBus, engine)
+   46    METH async def initialize(self)
+   52    METH async def sense(self) -> dict
+   83    METH async def think(self, data: dict) -> dict
+  158    METH async def act(self, analysis: dict)
+  177    METH async def check_positions(self)
+  194    METH async def _protect_breakeven(self)
+  243    METH async def _auto_close_expired(self)
+  279    METH async def _scalp_take_profit(self)
+
+########## agents/news_agent.py  (145 lines) ##########
+   18  CONST  logger = get_logger('news_agent')
+   21  CLASS  class NewsAgent(BaseAgent)
+   31    METH def __init__(self, event_bus: EventBus, sentiment_analyzer: SentimentAnalyzer)
+   36    METH async def sense(self) -> dict
+   43    METH async def think(self, data: dict) -> dict
+  110    METH async def act(self, analysis: dict)
+
+########## analysis/__init__.py  (1 lines) ##########
+
+########## analysis/backtester.py  (980 lines) ##########
+   39  CONST  logger = get_logger('backtester')
+   48  CLASS  @dataclass
+   48  CLASS  class L2Snapshot()
+   56    ANNF timestamp: float
+   57    ANNF symbol: str
+   58    ANNF bids: List[Tuple[float, float]]
+   59    ANNF asks: List[Tuple[float, float]]
+   61    METH def best_bid(self) -> Optional[float]
+   64    METH def best_ask(self) -> Optional[float]
+   67    METH def mid(self) -> Optional[float]
+   73    METH def bid_depth(self, n: int) -> float
+   76    METH def ask_depth(self, n: int) -> float
+   81  CLASS  @dataclass
+   81  CLASS  class TapeTrade()
+   83    ANNF timestamp: float
+   84    ANNF price: float
+   85    ANNF size: float
+   86    ANNF side: str = 'BUY'
+   90  CLASS  @dataclass
+   90  CLASS  class PendingOrder()
+   98    ANNF symbol: str
+   99    ANNF side: str
+  100    ANNF price: float
+  101    ANNF quantity: float
+  102    ANNF timestamp: float
+  103    ANNF remaining: float
+  104    ANNF queue_ahead: float
+  105    ANNF filled_quantity: float = 0.0
+  106    ANNF fill_price: Optional[float] = None
+  107    ANNF reason: str = 'SIGNAL'
+  110    METH def is_filled(self) -> bool
+  114    METH def is_expired(self) -> bool
+  119  CLASS  @dataclass
+  119  CLASS  class Fill()
+  121    ANNF symbol: str
+  122    ANNF side: str
+  123    ANNF quantity: float
+  124    ANNF price: float
+  125    ANNF mid_at_fill: Optional[float]
+  126    ANNF slippage: float
+  127    ANNF slippage_bps: float
+  128    ANNF fees: float
+  129    ANNF timestamp: float
+  133  CLASS  @dataclass
+  133  CLASS  class BacktestStats()
+  136    ANNF total_trades: int = 0
+  137    ANNF wins: int = 0
+  138    ANNF losses: int = 0
+  139    ANNF net_pnl: float = 0.0
+  140    ANNF gross_profit: float = 0.0
+  141    ANNF gross_loss: float = 0.0
+  142    ANNF profit_factor: Optional[float] = None
+  143    ANNF win_rate: Optional[float] = None
+  144    ANNF sharpe: Optional[float] = None
+  145    ANNF sortino: Optional[float] = None
+  146    ANNF max_drawdown: Optional[float] = None
+  147    ANNF max_drawdown_pct: Optional[float] = None
+  148    ANNF avg_slippage_bps: Optional[float] = None
+  149    ANNF total_fees: float = 0.0
+  150    ANNF unfilled_orders: int = 0
+  151    ANNF equity_curve: List[Tuple[float, float]] = field(default_factory=list)
+  159  FUNC   def _returns(equity: List[float]) -> List[float]
+  170  FUNC   def sharpe_ratio(returns: Sequence[float], risk_free: float = 0.0) -> Optional[float]
+  189  FUNC   def sortino_ratio(returns: Sequence[float], risk_free: float = 0.0) -> Optional[float]
+  212  FUNC   def max_drawdown(equity: List[float]) -> Tuple[Optional[float], Optional[float]]
+  239  CLASS  class QueueFillModel()
+  272    METH def __init__(self, initial_queue_ahead: float = 0.0)
+  277    METH def on_trade(self, trade_size: float) -> float
+  301    METH def has_priority(self) -> bool
+  311  FUNC   def load_l2_events(sqlite_path: str) -> Iterator[Tuple[str, float, object]]
+  352  FUNC   def synthesize_walk(
+  436  CLASS  @dataclass
+  436  CLASS  class CompletedTrade()
+  438    ANNF symbol: str
+  439    ANNF side: str
+  440    ANNF quantity: float
+  441    ANNF entry_price: float
+  442    ANNF exit_price: float
+  443    ANNF entry_fill: Optional[Fill]
+  444    ANNF exit_fill: Optional[Fill]
+  445    ANNF pnl: float
+  446    ANNF fees: float
+  447    ANNF net_pnl: float
+  448    ANNF reason: str
+  449    ANNF entry_ts: float
+  450    ANNF exit_ts: float
+  453  CLASS  class L2Backtester()
+  469    METH def __init__(
+  497    METH def _worst_fill_price(
+  542    METH def _estimate_impact_bps(
+  573    METH def _queue_ahead_at_price(self, symbol: str, side: str, price: float) -> float
+  601    METH def submit_limit(
+  639    METH def on_snapshot(self, snap: L2Snapshot) -> None
+  645    METH def on_trade_event(self, trade: TapeTrade) -> None
+  696    METH def open_position(
+  763    METH def close_position(self, reason: str = "SIGNAL", use_market_impact: bool = True)
+  832    METH def _mark_equity(self, timestamp: float) -> None
+  856    METH def replay(
+  901    METH def stats(self) -> BacktestStats
+  950    METH def report(self) -> str
+
+########## analysis/direction_ensemble.py  (227 lines) ##########
+   32  CONST  MAX_AGENT_Z = 2.5
+   34  CONST  DIRECTION_LONG = 'LONG'
+   35  CONST  DIRECTION_SHORT = 'SHORT'
+   36  CONST  DIRECTION_NEUTRAL = 'NEUTRAL'
+   39  FUNC   def _sigmoid(z: float) -> float
+   47  FUNC   def _normalize_z(direction: str, confidence: float) -> float
+   63  FUNC   def agreement_score(verdict: dict, peers: List[dict]) -> float
+   83  FUNC   def aggregate(verdicts: List[dict], cfg) -> dict
+  194  FUNC   def make_verdict(
+  218  FUNC   def abstain(agent: str, symbol: str, reason: str = "tidak ada data") -> dict
+
+########## analysis/fundamental.py  (153 lines) ##########
+    9  CONST  logger = get_logger('fundamental')
+   12  CLASS  class FundamentalAnalyzer()
+   18    METH def __init__(self)
+   23    METH def update_macro(self, macro_context: Dict)
+   27    METH def update_sentiment(self, sentiment_aggregate: Dict)
+   31    METH def update_calendar(self, events: List[dict])
+   35    METH def analyze(self) -> Dict
+  135    METH def should_reduce_risk(self) -> bool
+  143    METH def get_suggested_leverage(self, default: int = 5) -> int
+
+########## analysis/ml_signals.py  (257 lines) ##########
+   18  CONST  logger = get_logger('ml_signals')
+   20  CONST  MODEL_DIR = Path('ml/models')
+   23  CLASS  class MLSignalGenerator()
+   35    METH def __init__(self)
+   43    METH async def initialize(self)
+   52    METH def _load_model(self)
+   63    METH def extract_features(
+  137    METH def predict(
+  169    METH def _predict_ml(self, features: np.ndarray) -> Dict
+  189    METH def _predict_rule_based(self, features: np.ndarray) -> Dict
+
+########## analysis/probability_engine.py  (433 lines) ##########
+   35  FUNC   def norm_cdf(x: float) -> float
+   40  FUNC   def calculate_order_flow_imbalance(
+   93  FUNC   def calculate_technical_zscore(indicators: Dict, current_price: float) -> float
+  139  FUNC   def calculate_realized_volatility(df: pd.DataFrame, window: int = 30) -> float
+  155  CLASS  class QuantitativeProbabilityEngine()
+  161    METH def __init__(self)
+  171    METH def compute_composite_probability(
+  270    METH def compute_directional_curve(
+  326    METH def compute_diffusion_curve(
+  386    METH def compute_mathematical_edge(
+  433  CONST  probability_engine = QuantitativeProbabilityEngine()
+
+########## analysis/technical.py  (314 lines) ##########
+   14  CONST  logger = get_logger('technical')
+   17  CLASS  class TechnicalAnalyzer()
+   30    METH def __init__(self)
+   41    METH def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame
+   94    METH def generate_signals(self, df: pd.DataFrame) -> Dict
+  302    METH def ohlcv_to_dataframe(ohlcv_data: List[list]) -> pd.DataFrame
+
+########## analysis/vol_target.py  (132 lines) ##########
+   32  CONST  logger = get_logger('vol_target')
+   37  CONST  REFERENCE_DAILY_VOL = 0.03
+   40  FUNC   def daily_vol(symbol: str, window_seconds: float = 300.0) -> Optional[float]
+   68  FUNC   def vol_ratio(symbol: str) -> Optional[float]
+   80  FUNC   def target_risk_fraction(symbol: str,
+  110  FUNC   def should_trade(symbol: str,
+
+########## analysis/volatility.py  (412 lines) ##########
+   29  CONST  logger = get_logger('volatility')
+   37  FUNC   def realized_volatility(symbol: str, window_seconds: float = 30.0) -> Optional[float]
+   70  FUNC   def realized_vol_pct(symbol: str, window_seconds: float = 30.0) -> Optional[float]
+   91  FUNC   def atr_1m_from_candles(candles: List[dict], period: int = 14) -> Optional[Dict[str, float]]
+  152  CONST  _ATR_CACHE: Dict[Tuple[str, int], Dict[str, float]] = {}
+  153  CONST  _ATR_CACHE_BUCKET_SECONDS = 5
+  154  CONST  _ATR_CACHE_MAX_ENTRIES = 256
+  157  FUNC   def _cache_key(symbol: str) -> Tuple[str, int]
+  163  FUNC   def atr_1m_pct(symbol: str, candles: Optional[List[dict]] = None,
+  203  FUNC   def clear_volatility_cache() -> None
+  222  CONST  _CANDLE_SOURCE = None
+  225  FUNC   def set_candle_source(fn) -> None
+  243  FUNC   def clear_candle_source() -> None
+  249  FUNC   def _load_candles(symbol: str, limit: int) -> Optional[List[dict]]
+  266  FUNC   def get_dynamic_tp_sl_thresholds(symbol: str, cfg=None) -> Dict[str, Optional[float]]
+  347  FUNC   def assess_volatility_gate(

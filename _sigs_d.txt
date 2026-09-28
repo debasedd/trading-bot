@@ -1,0 +1,292 @@
+
+########## data/__init__.py  (1 lines) ##########
+
+########## data/hyperliquid_feed.py  (573 lines) ##########
+   44  CONST  logger = get_logger('hyperliquid_feed')
+   46  CONST  HL_REST_URL = 'https://api.hyperliquid.xyz/info'
+   47  CONST  HL_WS_URL = 'wss://api.hyperliquid.xyz/ws'
+   50  CONST  WS_MAX_SIZE = 2 ** 22
+   53  CONST  WS_PING_INTERVAL = 30.0
+   56  CONST  WS_RECV_TIMEOUT = 60.0
+   59  FUNC   def coin_to_symbol(coin: str) -> str
+   64  FUNC   def symbol_to_coin(symbol: str) -> str
+   76  CLASS  class HyperliquidFeed()
+   84    METH def __init__(self, event_bus=None)
+   99    METH def _ensure_native_kernel(self) -> bool
+  126    METH def _post_info_sync(self, payload: dict, timeout: float = 8.0)
+  139    METH async def post_info(self, payload: dict, timeout: float = 8.0)
+  143    METH async def fetch_universe(self) -> List[dict]
+  161    METH async def discover_top_volume_symbols(self, limit: int = 10) -> List[str]
+  203    METH async def fetch_all_mids(self) -> Dict[str, float]
+  236    METH async def fetch_l2_book(self, coin: str, depth: int = 20) -> Optional[dict]
+  253    METH async def fetch_candles(
+  313    METH def _parse_book(coin: str, levels: list, ts: Optional[int]) -> dict
+  353    METH def _parse_candle(data: dict) -> Optional[dict]
+  373    METH def set_watched_coins(self, symbols: List[str])
+  377    METH def _subscriptions(self) -> List[dict]
+  393    METH async def _subscribe(self, ws)
+  402    METH async def _ping_loop(self, ws)
+  411    METH def _handle_message(self, raw: str)
+  492    METH async def websocket_loop(self)
+  553    METH def stop(self)
+  560    METH def is_connected(self) -> bool
+  563    METH def get_status(self) -> dict
+
+########## data/macro_fetcher.py  (218 lines) ##########
+   18  CONST  logger = get_logger('macro_fetcher')
+   21  CONST  FRED_SERIES = {'DFF': 'FED_FUNDS_RATE', 'CPIAUCSL': 'CPI', 'DTWEXBGS': 'DXY', 'UNRATE': 'UNEMPLOYMENT', 'T10Y2Y': 'YIELD_CURVE', 'VIXCLS': 'VIX'}
+   31  CLASS  class MacroFetcher()
+   38    METH def __init__(self, fred_api_key: str = None)
+   42    METH async def fetch_fred_data(self) -> List[MacroData]
+   73    METH def _fetch_fred_series(self, series_id: str) -> Optional[dict]
+  104    METH async def fetch_forex_factory_calendar(self) -> List[dict]
+  137    METH async def fetch_all(self) -> dict
+  149    METH def interpret_macro_context(self, fred_data: List[MacroData], calendar_events: List[dict]) -> dict
+
+########## data/news_fetcher.py  (154 lines) ##########
+   17  CONST  logger = get_logger('news_fetcher')
+   20  CLASS  class NewsFetcher()
+   27    METH def __init__(self)
+   31    METH async def fetch_rss(self) -> List[NewsItem]
+   44    METH async def _parse_rss_feed(self, url: str) -> List[NewsItem]
+   82    METH async def fetch_cryptopanic(self) -> List[NewsItem]
+  125    METH async def fetch_all(self) -> List[NewsItem]
+  136    METH def clear_cache(self)
+  144    METH def _extract_source_name(url: str) -> str
+
+########## data/price_feed.py  (705 lines) ##########
+   29  CONST  logger = get_logger('price_feed')
+   31  CONST  COINGECKO_MAP = {'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana', 'XRP': 'ripple', 'BNB': 'binancecoin', 'DOGE': 'dogecoin', 'ADA': 'cardano', 'AVAX': 'avalanche-2', 'LINK': 'chainlink', 'NEAR': 'near', 'SUI': 'sui', 'DOT': 'polkadot', 'LTC': 'litecoin', 'UNI': 'uniswap', 'PEPE': 'pepe', 'SHIB': 'shiba-inu', 'APT': 'aptos', 'ZEC': 'zcash', 'HYPE': 'hyperliquid', 'TRX': 'tron'}
+   54  CONST  SPECIAL_YF_MAP = {'SUI': 'SUI20947-USD', 'PEPE': 'PEPE24478-USD', 'APT': 'APT21794-USD', 'UNI': 'UNI7083-USD', 'SHIB': 'SHIB-USD'}
+   63  CONST  VERIFIED_FUTURES = {'BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'DOGE', 'ADA', 'AVAX', 'LINK', 'NEAR', 'SUI', 'DOT', 'LTC', 'UNI', 'PEPE', 'SHIB', 'APT', 'TRX', 'ATOM', 'INJ'}
+   69  FUNC   def _symbol_to_yf(symbol: str) -> str
+   77  FUNC   def _symbol_to_base(symbol: str) -> str
+   82  CLASS  class PriceFeed()
+   93    METH def __init__(self, event_bus: EventBus)
+  109    METH async def initialize(self)
+  136    METH async def close(self)
+  146    METH async def start_streaming(self)
+  160    METH async def _fetch_ohlcv_yf(
+  198    METH async def fetch_ohlcv(
+  273    METH async def _fetch_ticker_yf(self, symbol: str) -> Optional[dict]
+  305    METH async def _fetch_ticker_coingecko(self, symbol: str) -> Optional[dict]
+  340    METH async def fetch_ticker(self, symbol: str) -> Optional[dict]
+  417    METH async def fetch_funding_rate(self, symbol: str) -> Optional[dict]
+  481    METH async def fetch_mark_price(self, symbol: str) -> Optional[float]
+  515    METH async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]
+  557    METH async def fetch_all_tickers(self) -> Dict[str, dict]
+  566    METH async def price_update_loop(self)
+  607    METH def stop(self)
+  611    METH def update_symbols(self, new_symbols: List[str])
+  616    METH async def discover_top_volume_symbols(self, limit: int = 10) -> List[str]
+  689    METH def get_last_price(self, symbol: str) -> Optional[float]
+  693    METH def get_all_last_prices(self) -> Dict[str, float]
+  700  CONST  _active_price_feed: Optional['PriceFeed'] = None
+  703  FUNC   def get_price_feed() -> Optional["PriceFeed"]
+
+########## data/sentiment.py  (213 lines) ##########
+   13  CONST  logger = get_logger('sentiment')
+   16  CLASS  class SentimentAnalyzer()
+   23    METH def __init__(self, use_finbert: bool = True)
+   29    METH async def initialize(self)
+   50    METH def _load_vader(self)
+   55    METH def _load_finbert(self)
+   65    METH def analyze_vader(self, text: str) -> Dict
+   93    METH async def analyze_vader_async(self, text: str) -> Dict
+   98    METH def analyze_finbert(self, text: str) -> Dict
+  133    METH async def analyze_finbert_async(self, text: str) -> Dict
+  138    METH async def analyze_finbert_batch(self, texts: List[str]) -> List[Dict]
+  175    METH def aggregate_sentiment(self, sentiments: List[Dict]) -> Dict
+
+########## database/__init__.py  (1 lines) ##########
+
+########## database/db.py  (258 lines) ##########
+   10  CONST  logger = get_logger('database')
+   13  CONST  SCHEMA_SQL = "\nCREATE TABLE IF NOT EXISTS candles (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    symbol TEXT NOT NULL,\n    timeframe TEXT NOT NULL,\n    timestamp INTEGER NOT NULL,\n    open REAL NOT NULL,\n    high REAL NOT NULL,\n    low REAL NOT NULL,\n    close REAL NOT NULL,\n    volume REAL NOT NULL,\n    created_at TEXT DEFAULT (datetime('now')),\n    UNIQUE(symbol, timeframe, timestamp)\n);\nCREATE INDEX IF NOT EXISTS idx_candles_lookup ON candles(symbol, timeframe, timestamp);\n\nCREATE TABLE IF NOT EXISTS positions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    symbol TEXT NOT NULL,\n    side TEXT NOT NULL,\n    entry_price REAL NOT NULL,\n    quantity REAL NOT NULL,\n    leverage INTEGER NOT NULL DEFAULT 1,\n    margin REAL NOT NULL,\n    liquidation_price REAL NOT NULL,\n    stop_loss REAL,\n    take_profit REAL,\n    unrealized_pnl REAL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'OPEN',\n    opened_at TEXT DEFAULT (datetime('now')),\n    closed_at TEXT,\n    close_price REAL,\n    realized_pnl REAL,\n    close_reason TEXT,\n    reasoning TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status, symbol);\n\nCREATE TABLE IF NOT EXISTS trades (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    position_id INTEGER REFERENCES positions(id),\n    symbol TEXT NOT NULL,\n    side TEXT NOT NULL,\n    price REAL NOT NULL,\n    quantity REAL NOT NULL,\n    fee REAL NOT NULL DEFAULT 0,\n    fee_type TEXT DEFAULT 'TAKER',\n    trade_type TEXT NOT NULL,\n    executed_at TEXT DEFAULT (datetime('now'))\n);\nCREATE INDEX IF NOT EXISTS idx_trades_time ON trades(executed_at);\n\nCREATE TABLE IF NOT EXISTS signals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    symbol TEXT NOT NULL,\n    timestamp TEXT DEFAULT (datetime('now')),\n    signal_type TEXT NOT NULL,\n    signal_value TEXT NOT NULL,\n    direction TEXT,\n    confidence REAL,\n    source TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_signals_time ON signals(symbol, timestamp);\n\nCREATE TABLE IF NOT EXISTS news (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    title TEXT NOT NULL,\n    source TEXT NOT NULL,\n    url TEXT,\n    published_at TEXT,\n    fetched_at TEXT DEFAULT (datetime('now')),\n    sentiment_vader REAL,\n    sentiment_finbert REAL,\n    sentiment_label TEXT,\n    impact_level TEXT DEFAULT 'LOW',\n    content_summary TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_news_time ON news(fetched_at);\n\nCREATE TABLE IF NOT EXISTS agent_logs (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    agent_name TEXT NOT NULL,\n    action TEXT NOT NULL,\n    reasoning TEXT NOT NULL,\n    input_data TEXT,\n    output_data TEXT,\n    timestamp TEXT DEFAULT (datetime('now'))\n);\nCREATE INDEX IF NOT EXISTS idx_agent_logs_time ON agent_logs(agent_name, timestamp);\n\nCREATE TABLE IF NOT EXISTS account (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    balance REAL NOT NULL,\n    initial_balance REAL NOT NULL,\n    total_pnl REAL DEFAULT 0,\n    total_trades INTEGER DEFAULT 0,\n    winning_trades INTEGER DEFAULT 0,\n    losing_trades INTEGER DEFAULT 0,\n    max_drawdown REAL DEFAULT 0,\n    peak_balance REAL,\n    sharpe_ratio REAL,\n    profit_factor REAL,\n    updated_at TEXT DEFAULT (datetime('now'))\n);\n\nCREATE TABLE IF NOT EXISTS balance_history (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    balance REAL NOT NULL,\n    unrealized_pnl REAL DEFAULT 0,\n    equity REAL NOT NULL,\n    timestamp TEXT DEFAULT (datetime('now'))\n);\nCREATE INDEX IF NOT EXISTS idx_balance_time ON balance_history(timestamp);\n\n-- Snapshot arah LONG/SHORT hasil ensemble multi-agen.\n-- Satu baris per simbol per siklus ensemble. HUD dan DecisionAgent membaca\n-- baris TERBARU yang sama, sehingga tampilan dan keputusan trade tidak\n-- mungkin berbeda sumber.\nCREATE TABLE IF NOT EXISTS direction_snapshots (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    symbol TEXT NOT NULL,\n    prob_long REAL NOT NULL,\n    prob_short REAL NOT NULL,\n    direction TEXT NOT NULL,\n    confidence REAL NOT NULL,\n    z_composite REAL DEFAULT 0,\n    agent_breakdown TEXT,      -- JSON: verdict per agen\n    diffusion TEXT,            -- JSON: time_horizons + long_probs + short_probs\n    created_at TEXT DEFAULT (datetime('now'))\n);\nCREATE INDEX IF NOT EXISTS idx_dir_snap_symbol ON direction_snapshots(symbol, id);\n\nCREATE TABLE IF NOT EXISTS macro_data (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    indicator TEXT NOT NULL,\n    value REAL NOT NULL,\n    period TEXT,\n    source TEXT NOT NULL,\n    fetched_at TEXT DEFAULT (datetime('now')),\n    UNIQUE(indicator, period)\n);\n"
+  157  CLASS  class Database()
+  160    METH def __init__(self, db_path: str = None)
+  166    METH async def connect(self)
+  196    METH async def close(self)
+  204    METH def conn(self) -> aiosqlite.Connection
+  210    METH async def execute(self, sql: str, params: tuple = None)
+  216    METH async def executemany(self, sql: str, params_list: list)
+  220    METH async def fetchone(self, sql: str, params: tuple = None)
+  225    METH async def fetchall(self, sql: str, params: tuple = None)
+  230    METH async def commit(self)
+  236  CONST  _db: Database = None
+  239  FUNC   async def get_db() -> Database
+  248  FUNC   async def init_db() -> Database
+  253  FUNC   async def close_db()
+
+########## database/models.py  (130 lines) ##########
+   11  CLASS  @dataclass
+   11  CLASS  class Candle()
+   12    ANNF symbol: str
+   13    ANNF timeframe: str
+   14    ANNF timestamp: int
+   15    ANNF open: float
+   16    ANNF high: float
+   17    ANNF low: float
+   18    ANNF close: float
+   19    ANNF volume: float
+   20    ANNF id: Optional[int] = None
+   21    ANNF created_at: Optional[str] = None
+   25  CLASS  @dataclass
+   25  CLASS  class Position()
+   26    ANNF symbol: str
+   27    ANNF side: str
+   28    ANNF entry_price: float
+   29    ANNF quantity: float
+   30    ANNF leverage: int
+   31    ANNF margin: float
+   32    ANNF liquidation_price: float
+   33    ANNF stop_loss: Optional[float] = None
+   34    ANNF take_profit: Optional[float] = None
+   35    ANNF unrealized_pnl: float = 0.0
+   36    ANNF status: str = 'OPEN'
+   37    ANNF opened_at: Optional[str] = None
+   38    ANNF closed_at: Optional[str] = None
+   39    ANNF close_price: Optional[float] = None
+   40    ANNF realized_pnl: Optional[float] = None
+   41    ANNF close_reason: Optional[str] = None
+   42    ANNF reasoning: Optional[str] = None
+   43    ANNF id: Optional[int] = None
+   47  CLASS  @dataclass
+   47  CLASS  class Trade()
+   48    ANNF symbol: str
+   49    ANNF side: str
+   50    ANNF price: float
+   51    ANNF quantity: float
+   52    ANNF trade_type: str
+   53    ANNF position_id: Optional[int] = None
+   54    ANNF fee: float = 0.0
+   55    ANNF fee_type: str = 'TAKER'
+   56    ANNF executed_at: Optional[str] = None
+   57    ANNF id: Optional[int] = None
+   61  CLASS  @dataclass
+   61  CLASS  class Signal()
+   62    ANNF symbol: str
+   63    ANNF signal_type: str
+   64    ANNF signal_value: str
+   65    ANNF direction: Optional[str] = None
+   66    ANNF confidence: Optional[float] = None
+   67    ANNF source: Optional[str] = None
+   68    ANNF timestamp: Optional[str] = None
+   69    ANNF id: Optional[int] = None
+   73  CLASS  @dataclass
+   73  CLASS  class NewsItem()
+   74    ANNF title: str
+   75    ANNF source: str
+   76    ANNF url: Optional[str] = None
+   77    ANNF published_at: Optional[str] = None
+   78    ANNF fetched_at: Optional[str] = None
+   79    ANNF sentiment_vader: Optional[float] = None
+   80    ANNF sentiment_finbert: Optional[float] = None
+   81    ANNF sentiment_label: Optional[str] = None
+   82    ANNF impact_level: str = 'LOW'
+   83    ANNF content_summary: Optional[str] = None
+   84    ANNF id: Optional[int] = None
+   88  CLASS  @dataclass
+   88  CLASS  class AgentLog()
+   89    ANNF agent_name: str
+   90    ANNF action: str
+   91    ANNF reasoning: str
+   92    ANNF input_data: Optional[str] = None
+   93    ANNF output_data: Optional[str] = None
+   94    ANNF timestamp: Optional[str] = None
+   95    ANNF id: Optional[int] = None
+   99  CLASS  @dataclass
+   99  CLASS  class Account()
+  100    ANNF balance: float
+  101    ANNF initial_balance: float
+  102    ANNF total_pnl: float = 0.0
+  103    ANNF total_trades: int = 0
+  104    ANNF winning_trades: int = 0
+  105    ANNF losing_trades: int = 0
+  106    ANNF max_drawdown: float = 0.0
+  107    ANNF peak_balance: Optional[float] = None
+  108    ANNF sharpe_ratio: Optional[float] = None
+  109    ANNF profit_factor: Optional[float] = None
+  110    ANNF updated_at: Optional[str] = None
+  111    ANNF id: Optional[int] = None
+  115  CLASS  @dataclass
+  115  CLASS  class BalanceSnapshot()
+  116    ANNF balance: float
+  117    ANNF equity: float
+  118    ANNF unrealized_pnl: float = 0.0
+  119    ANNF timestamp: Optional[str] = None
+  120    ANNF id: Optional[int] = None
+  124  CLASS  @dataclass
+  124  CLASS  class MacroData()
+  125    ANNF indicator: str
+  126    ANNF value: float
+  127    ANNF source: str
+  128    ANNF period: Optional[str] = None
+  129    ANNF fetched_at: Optional[str] = None
+  130    ANNF id: Optional[int] = None
+
+########## database/repository.py  (604 lines) ##########
+   14  CONST  logger = get_logger('repository')
+   17  FUNC   def _valid_candle(c: Candle) -> bool
+   37  CLASS  class Repository()
+   40    METH def __init__(self, db: Database)
+   45    METH async def insert_candle(self, c: Candle)
+   62    METH async def insert_candles_batch(self, candles: List[Candle])
+   92    METH async def get_candles(self, symbol: str, timeframe: str, limit: int = 500) -> List[dict]
+  100    METH async def get_latest_candle(self, symbol: str, timeframe: str) -> Optional[dict]
+  110    METH async def insert_position(self, p: Position) -> int
+  122    METH async def update_position_pnl(self, position_id: int, unrealized_pnl: float)
+  129    METH async def update_position_sl_tp(
+  147    METH async def close_position(
+  171    METH async def liquidate_position(self, position_id: int, liq_price: float, realized_pnl: float) -> bool
+  183    METH async def get_open_positions(self, symbol: str = None) -> List[dict]
+  195    METH async def get_all_positions(self, limit: int = 100) -> List[dict]
+  204    METH async def insert_trade(self, t: Trade) -> int
+  215    METH async def prune_agent_logs(self, keep: int = 5000)
+  235    METH async def get_trades(self, limit: int = 100) -> List[dict]
+  242    METH async def get_trades_by_position(self, position_id: int) -> List[dict]
+  251    METH async def insert_signal(self, s: Signal)
+  260    METH async def get_recent_signals(self, symbol: str, limit: int = 50) -> List[dict]
+  269    METH async def insert_news(self, n: NewsItem)
+  280    METH async def get_recent_news(self, limit: int = 50) -> List[dict]
+  287    METH async def news_exists(self, title: str, source: str) -> bool
+  296    METH async def insert_agent_log(self, log: AgentLog)
+  305    METH async def get_agent_logs(self, agent_name: str = None, limit: int = 100) -> List[dict]
+  320    METH async def get_account(self) -> Optional[dict]
+  324    METH async def init_account(self, initial_balance: float)
+  337    METH async def update_account(
+  356    METH async def update_account_stats(
+  395    METH async def update_balance(self, new_balance: float)
+  403    METH async def apply_balance_delta(self, delta: float) -> float
+  427    METH async def bump_peak_balance(self, candidate: float) -> float
+  443    METH async def insert_balance_snapshot(self, snap: BalanceSnapshot)
+  451    METH async def get_balance_history(self, limit: int = 1000) -> List[dict]
+  460    METH async def insert_direction_snapshot(self, snap: dict)
+  486    METH async def get_latest_direction_snapshot(self, symbol: str) -> Optional[dict]
+  495    METH async def get_latest_direction_snapshots(self) -> List[dict]
+  505    METH async def prune_direction_snapshots(self, keep_per_symbol: int = 120)
+  526    METH async def get_daily_realized_pnl(self) -> float
+  551    METH async def upsert_macro(self, m: MacroData)
+  561    METH async def get_macro_latest(self, indicator: str) -> Optional[dict]
+  568    METH async def get_all_macro(self) -> List[dict]
+  576    METH async def get_trade_stats(self) -> dict
+
+########## ml/__init__.py  (1 lines) ##########
+
+########## ml/predictor.py  (44 lines) ##########
+   14  CONST  logger = get_logger('ml_predictor')
+   17  CLASS  class Predictor()
+   20    METH def __init__(self)
+   23    METH async def initialize(self)
+   28    METH def predict(
+   43    METH def model_available(self) -> bool
+
+########## ml/trainer.py  (233 lines) ##########
+   16  CONST  logger = get_logger('ml_trainer')
+   18  CONST  MODEL_DIR = Path('ml/models')
+   21  CLASS  class ModelTrainer()
+   33    METH def __init__(self, lookahead: int = 10, threshold_pct: float = 0.005)
+   42    METH def prepare_features(self, df: pd.DataFrame) -> pd.DataFrame
+   80    METH def create_labels(self, df: pd.DataFrame) -> pd.Series
+   96    METH def train(self, df: pd.DataFrame) -> dict
+  171  FUNC   async def train_from_exchange(

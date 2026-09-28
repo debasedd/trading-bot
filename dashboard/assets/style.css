@@ -1,0 +1,1253 @@
+/* ============================================================
+   HUD 12-COLUMN TERMINAL
+   ------------------------------------------------------------
+   Aturan main: satu font monospace, enam ukuran, satu palet
+   semantik, dan motion HANYA untuk state yang benar-benar berubah.
+
+   Palet lama (var(--pos) hijau di atas var(--bg-inset)) gagal WCAG AA di
+   2.72:1 — trader yang membaca angka di atas itu sebenarnya
+   sedang menebak. Nilai di bawah sudah dihitung kontrasnya.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+:root {
+    /* --- type: satu family, enam langkah --- */
+    --font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --fs-micro: 9px;
+    --fs-label: 10px;
+    --fs-sm:    11px;
+    --fs-md:    13px;
+    --fs-lg:    18px;
+    --fs-hero:  34px;
+
+    /* --- spacing: irama 4px --- */
+    --sp-1: 2px;  --sp-2: 4px;  --sp-3: 6px;
+    --sp-4: 8px;  --sp-5: 12px; --sp-6: 16px;
+
+    /* --- surface & garis ---
+       SEMUA token di sini harus punya nilai literal. `var()` yang
+       menunjuk dirinya sendiri (mis. `--fg: var(--fg)`) tidak valid
+       pada computed-value time: browser membuang seluruh deklarasi,
+       jadi panel kehilangan background DAN border tanpa error apa pun.
+       Test `test_no_cyclic_css_variables` menjaga hal ini. */
+    --bg-app:   #dfd5b8;
+    --bg-card:  #e5dbc0;
+    --bg-inset: #ede4cc;
+    --fg:       #000000;
+    --line:     #000000;
+    --line-soft: rgba(0, 0, 0, 0.13);
+
+    /* --- teks: tiga tingkat, tidak lebih --- */
+    --fg-dim:   #3a352c;
+    --fg-muted: #555042;
+
+    /* --- semantik: satu warna = satu arti --- */
+    --pos:   #006a2b;   /* naik, untung, LONG */
+    --neg:   #9e1b16;   /* turun, rugi, SHORT */
+    --warn:  #8a5200;   /* caution */
+    --accent:#005a8c;   /* netral, aktif */
+
+    /* --- tint turunan dari palet semantik --- */
+    --pos-ink:    #005c1c;
+    --pos-text:   #006622;
+    --pos-wash:   #eef6ee;
+    --neg-ink:    #8c1f1f;
+    --neg-text:   #992222;
+    --neg-wash:   #f7d6d3;
+    --neg-wash-2: #fdeceb;
+    --warn-wash:  #ffefc2;
+    --warn-wash-2:#fff8e6;
+    --rule-soft:  #b5ab8d;
+    --rule:       #ccc2a5;
+    --rule-strong:#d8ceb0;
+    --track:      #cfc5a7;
+    --white:      #ffffff;
+
+    /* --- gutter: satu token dipakai grid, bar, dan container --- */
+    --gutter: 6px;
+    --pad-body: var(--sp-2);
+    --pad-bar:  var(--sp-2);
+
+    /* --- KONTRAK TINGGI: satu-satunya sumber tinggi panel ---
+       Dulu ada 7 tinggi chart yang ditulis inline di DUA file
+       (hud.py style + fig.update_layout) dengan nilai 140/115/210/272/45.
+       Sekarang hanya `div` yang punya tinggi; figure tidak pernah
+       mengklaim tinggi sendiri, jadi tidak ada lagi selisih px yang
+       meninggalkan strip mati di setiap refresh. */
+    --h-topbar:   28px;
+    --h-rail:     66px;   /* 22 header + 36 isi + 8 pad */
+    --h-tape:     20px;
+    --h-zone2:   356px;
+    --h-zone3:   260px;
+    --h-pipe:     56px;   /* 22 header + 28 node + 6 slack */
+    --h-head:     22px;
+    --h-scroll:  230px;
+    --h-chart:   179px;
+    --h-tape-ob: 143px;
+    --h-ob-row:   13px;
+    --h-conv:     92px;   /* zone2 stack: 160 - odds 44 - strip 16 - pad 8 */
+    --h-neural:  230px;   /* zone3: 260 - header 22 - pad 8 */
+    --h-spark:    34px;
+    --h-equity:  230px;   /* zone3: 260 - header 22 - pad 8 */
+    --h-log:     230px;   /* zone3: isi scroll */
+    --h-kpi:     118px;   /* zone3: 230 - 2x34 - 2x12 label - pad */
+
+
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+html, body {
+    background-color: var(--bg-app);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.25;
+    letter-spacing: -0.2px;
+    width: 100%;
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+}
+
+/* Custom retro scrollbar */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: var(--track);
+    border: 1px solid var(--fg);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--fg);
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--pos);
+}
+
+/* --- Container Utama (Fit 100% Width Tanpa Overflow) --- */
+.hud-container {
+    width: 100%;
+    max-width: 100vw;
+    margin: 0 auto;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    box-sizing: border-box;
+}
+
+/* --- Top Header Bar --- */
+.hud-topbar {
+    background-color: var(--bg-card);
+    border: 2px solid var(--line);
+    padding: 4px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.bot-brand {
+    font-weight: 700;
+    font-size: 1.15rem;
+    color: var(--fg);
+    letter-spacing: 0.5px;
+}
+
+.badge-black {
+    background: var(--fg);
+    color: var(--white);
+    font-size: 10px;
+    padding: 2px 5px;
+    border-radius: 1px;
+    font-weight: bold;
+    letter-spacing: 0.3px;
+    transition: transform 0.1s ease;
+}
+
+.badge-green {
+    background: var(--pos);
+    color: var(--white);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 1px;
+    font-weight: bold;
+}
+
+.badge-red {
+    background: var(--neg);
+    color: var(--white);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 1px;
+    font-weight: bold;
+}
+
+.badge-outline-green {
+    border: 1px solid var(--pos);
+    color: var(--pos);
+    background: var(--pos-wash);
+    font-size: 10px;
+    padding: 2px 5px;
+    font-weight: bold;
+}
+
+
+
+.topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+}
+
+.spot-pill {
+    background: var(--bg-inset);
+    border: 1px solid var(--fg);
+    padding: 2px 6px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-weight: bold;
+    transition: all 0.1s ease;
+}
+.spot-pill:hover {
+    transform: translate3d(0, -1px, 0);
+}
+
+/* --- Specialist Subtitle Strip --- */
+.hud-specialist-strip {
+    background: var(--fg);
+    color: var(--white);
+    font-size: 10.5px;
+    padding: 3px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    letter-spacing: 0.2px;
+}
+
+/* --- Ticker Tape Marquee (120 FPS Smooth Hardware Accelerated) --- */
+.hud-live-ticker-tape {
+    background: var(--bg-inset);
+    border: 1px solid var(--fg);
+    padding: 3px 8px;
+    font-size: 11px;
+    overflow: hidden;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+}
+
+.ticker-dot {
+    color: var(--neg);
+    font-size: 14px;
+}
+
+
+
+.ticker-marquee-wrapper {
+    display: inline-flex;
+    overflow: hidden;
+    width: 100%;
+}
+
+.ticker-marquee-content {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+
+
+/* --- Panel Kotak Umum --- */
+.hud-panel {
+    background: var(--bg-card);
+    border: 2px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* PENTING: Mencegah grid column meledak keluar viewport */
+    overflow: hidden;
+    /* Hanya box-shadow yang bertransisi. Versi lama ikut menggeser panel
+       1px ke atas saat hover, sehingga chart di dalam satu baris grid
+       kehilangan garis lurus horizontal begitu kursor lewat — itu salah
+       satu penyebab utama tampilan terasa tidak "rapih". */
+    transition: box-shadow 0.14s ease;
+}
+
+/* Hover hanya menambah kedalaman bayangan; posisi panel tetap diam. */
+
+
+.hud-panel-header {
+    background: var(--fg);
+    color: var(--white);
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    letter-spacing: 0.3px;
+    min-height: 24px;
+}
+
+.hud-panel-header .header-tag {
+    color: var(--pos);
+    font-size: 10px;
+}
+
+.hud-panel-body {
+    padding: 6px;
+    background: var(--bg-card);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* ============================================================
+   GRID 12 KOLOM
+   ============================================================
+   Struktur lama: `grid-4-col` -> dua baris full-width -> `grid-3-col`.
+   Tiga definisi grid terpisah, dan tidak ada yang_share baseline, jadi
+   garis vertikal antar baris tidak pernah bertemu. Itulah salah satu
+   alasan utama tampilan lama terbaca "berantakan" padahal tiap panelnya
+   sendiri rapi.
+
+   Sekarang: SATU grid 12 kolom untuk seluruh halaman. Tiap panel
+   Spinoza `grid-column: span N`, jadi alignment comes from the grid,
+   bukan dari tebakan ukuran per baris.
+   */
+.hud-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: var(--gutter);
+    width: 100%;
+    align-items: start;
+}
+
+.span-12 { grid-column: span 12; }
+.span-8  { grid-column: span 8; }
+.span-4  { grid-column: span 4; }
+.span-3  { grid-column: span 3; }
+.span-2  { grid-column: span 2; }
+
+/* Zona 2: price dominan di kiri, stack analitik di kanan. */
+.zone2-price { grid-column: span 8; height: var(--h-zone2); }
+.zone2-stack {
+    grid-column: span 4;
+    height: var(--h-zone2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--gutter);
+    min-width: 0;
+}
+.p-stack { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* Lebar 1100-1499: price tetap dominan, stack menyempit. */
+@media (max-width: 1499px) {
+    .zone2-price { grid-column: span 7; }
+    .zone2-stack { grid-column: span 5; }
+}
+
+/* Di bawah 1100 terminal jadi dua baris penuh; panel tetap satu kolom
+   penuh, bukan kolom pecah yang isinya tidak muat. */
+@media (max-width: 1099px) {
+    .hud-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .span-12, .zone2-price, .zone2-stack { grid-column: span 6; }
+    .span-8, .span-4, .span-3, .span-2 { grid-column: span 3; }
+}
+
+/* Bawah 768: satu kolom. Terminal adalah instrumen desktop; di bawah
+   ini tujuannya tetap terbaca, bukan tetap padat. */
+@media (max-width: 767px) {
+    .hud-grid { grid-template-columns: minmax(0, 1fr); }
+    .span-12, .span-8, .span-4, .span-3, .span-2,
+    .zone2-price, .zone2-stack { grid-column: span 1; }
+}
+
+/* --- BOX 1: WALLET & PNL --- */
+.wallet-box-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+}
+
+.giant-pnl {
+    font-family: var(--font-mono), var(--font-mono);
+    font-size: var(--fs-hero);
+    font-weight: 700;
+    color: var(--pos);
+    line-height: 1;
+    margin: 4px 0;
+    text-shadow: 1px 1px 0px var(--fg);
+    letter-spacing: 1px;
+}
+
+
+
+.wallet-subtext {
+    font-size: 10.5px;
+    font-weight: bold;
+    color: var(--fg);
+    margin-bottom: 5px;
+}
+
+.wallet-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--fg);
+    padding-top: 5px;
+    gap: 4px;
+    text-align: center;
+}
+
+.wallet-stat-item .stat-label {
+    font-size: 8.5px;
+    color: var(--fg-muted);
+    font-weight: bold;
+}
+.wallet-stat-item .stat-val {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--fg);
+}
+
+.drawdown-risk-row {
+    border-top: 1px dashed var(--fg);
+    margin-top: 5px;
+    padding-top: 4px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 9.5px;
+    font-weight: bold;
+}
+
+/* --- BOX 2: MINI ORDERBOOK / TAPE --- */
+.orderbook-tape {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 4px;
+    border-top: 1px solid var(--fg);
+    padding-top: 4px;
+}
+
+/* Baris L2: harga | ukuran | bar depth proporsional | nilai notional.
+   Bar depth memakai posisi absolute di belakang teks agar tidak menggeser layout. */
+.orderbook-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 0.85fr 1.1fr 0.9fr;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 3px;
+    transition: background-color 0.15s ease;
+    overflow: hidden;
+}
+.orderbook-row:hover {
+    background-color: var(--rule-strong);
+}
+
+.orderbook-row.ask { color: var(--neg); }
+.orderbook-row.bid { color: var(--pos); }
+
+/* Bar depth: tumbuh dari kanan (sisi harga) menuju kiri, gaya balok keras tanpa gradien */
+.ob-bar {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 0;
+    opacity: 0.30;
+    transform-origin: right center;
+    transition: width 0.18s linear;
+    pointer-events: none;
+}
+.ob-bar-ask {
+    background: var(--neg);
+    border-left: 1.5px solid var(--neg);
+}
+.ob-bar-bid {
+    background: var(--pos);
+    border-left: 1.5px solid var(--pos);
+}
+
+/* Teks baris harus di atas bar depth */
+.ob-price, .ob-size, .ob-total {
+    position: relative;
+    z-index: 1;
+}
+.ob-price { font-weight: bold; }
+.ob-size  { text-align: right; }
+.ob-total { text-align: right; font-weight: bold; opacity: 0.85; }
+.orderbook-spread {
+    text-align: center;
+    font-size: 8.5px;
+    font-weight: bold;
+    color: var(--warn);
+    border-top: 1px dashed var(--fg);
+    border-bottom: 1px dashed var(--fg);
+    padding: 1px 0;
+    margin: 2px 0;
+}
+
+
+
+/* --- BOX 3: OPEN POSITIONS TABLE --- */
+.positions-grid-table {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow-y: auto;
+    max-height: var(--h-log);
+}
+
+.position-compact-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-inset);
+    border: 1px solid var(--fg);
+    padding: 3px 5px;
+    font-size: 10px;
+    font-weight: bold;
+    transition: all 0.12s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+.position-compact-row:hover {
+    transform: translate3d(2px, 0, 0);
+}
+
+.position-symbol-chip {
+    background: var(--fg);
+    color: var(--white);
+    padding: 1px 4px;
+    font-size: 9.5px;
+    font-weight: bold;
+}
+
+/* --- BOX 4: SCANNER ODDS --- */
+.scanner-odds-row {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: var(--sp-1);
+    margin-bottom: var(--sp-1);
+    /* Tinggi baris odds dikunci supaya budget scanner bisa dihitung
+       dari CSS, bukan dari tebakan. Dulu tidak ada batasnya, jadi graf
+       konvergensi selalu jadi yang dipotong duluan. */
+    min-height: 44px;
+    flex: 0 0 auto;
+}
+
+.odds-item {
+    text-align: center;
+}
+.odds-label {
+    font-size: 8.5px;
+    font-weight: bold;
+    color: var(--fg-muted);
+}
+.odds-val-long {
+    font-size: 24px;
+    font-weight: 900;
+    color: var(--pos);
+}
+.odds-val-short {
+    font-size: 24px;
+    font-weight: 900;
+    color: var(--neg);
+}
+
+/* Badge konsensus ensemble — menggantikan "TARGET / CONVERGE $1.00" lama.
+   Isinya sekarang kesehatan ensemble (arah + confidence + berapa agen
+   setuju), bukan janji konvergensi yang tidak pernah dipantau. */
+.odds-consensus-badge {
+    background: var(--bg-inset);
+    border: 1px solid var(--fg);
+    padding: 2px 5px;
+    font-size: 9.5px;
+    font-weight: bold;
+    white-space: nowrap;
+}
+.odds-consensus-badge.stance-long {
+    background: rgba(0, 153, 51, 0.18);
+    border-color: var(--pos);
+    color: var(--pos-text);
+}
+.odds-consensus-badge.stance-short {
+    background: rgba(204, 51, 51, 0.16);
+    border-color: var(--neg);
+    color: var(--neg-text);
+}
+.odds-consensus-badge.stance-neutral {
+    background: var(--bg-inset);
+    border-color: var(--fg);
+    color: var(--fg-muted);
+}
+
+/* Strip verdict per-agen: membuat sifat multi-agent dari ensemble terlihat,
+   sekaligus menunjukkan agen mana yang sedang buta data. */
+.scanner-agent-strip {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 0 2px;
+    border-bottom: 1px solid var(--line-soft);
+    margin-bottom: 2px;
+    height: 16px;
+    flex: 0 0 auto;
+    font-size: 7px;
+    font-family: "Share Tech Mono", "Courier New", monospace;
+    /* Chip tidak boleh meluber. Strip ini selebar satu kolom grid (1/4
+       lebar layar), sedangkan 4 chip nowrap mudah melebihi lebar itu dan
+       sebelumnya ikut terpotong oleh `overflow: hidden` panel. */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.scanner-agent-strip::-webkit-scrollbar {
+    display: none;
+}
+.agent-strip-label {
+    font-weight: bold;
+    color: var(--fg-muted);
+    letter-spacing: 0.5px;
+    margin-right: 2px;
+    flex: 0 0 auto;
+}
+.agent-chip {
+    padding: 1px 3px;
+    border: 1px solid var(--fg);
+    background: var(--bg-inset);
+    color: var(--fg-muted);
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+.agent-chip.stance-long {
+    background: rgba(0, 153, 51, 0.20);
+    border-color: var(--pos);
+    color: var(--pos-ink);
+}
+.agent-chip.stance-short {
+    background: rgba(204, 51, 51, 0.18);
+    border-color: var(--neg);
+    color: var(--neg-ink);
+}
+.agent-chip.abstained {
+    opacity: 0.45;
+    border-style: dashed;
+}
+
+/* --- SECTION 2: STRATEGY DECISION TREE --- */
+
+
+
+/* ---------------------------------------------------------------
+   FLOWCHART TAHAP KEPUTUSAN — ANIMASI IDLE + STATUS REAL
+
+   Aturan penting: seluruh animasi hanya menyentuh `transform`, `opacity`,
+   dan `box-shadow` (semuanya di-composite GPU). Properti layout seperti
+   `width`/`margin` tidak pernah dianimasikan agar tidak memicu reflow.
+
+   Children kotak ini TIDAK pernah diganti Dash — callback hanya menukar
+   className — sehingga animasi tidak restart tiap siklus 500 ms.
+   --------------------------------------------------------------- */
+
+
+
+/* Hover memakai outline, bukan shadow: outline tidak ikut ter-render
+   ulang dan tidak membuat panel meleset dari grid. */
+
+/* Aksen tepi kiri bergaya tab berkas — murni warna, tanpa sudut membulat */
+
+
+/* --- Status: tahap yang baru saja selesai --- */
+
+/* --- Status: tahap yang sedang berjalan ---
+   Animasi idle dimatikan lalu diganti kedip cepat + lift tetap, sehingga
+   perbedaan "hidup" vs "diam" terbaca jelas tanpa keluar dari tema. */
+
+
+
+/* --- Status: tahap gagal / tertahan --- */
+
+
+
+
+/* Panah yang sudah dilalui menyala penuh; yang belum redup */
+
+/* --- Rel kemajuan di bawah flowchart --- */
+
+/* --- SECTION 4: TRADE LOGS STREAM (120 FPS SLIDE-IN) --- */
+.trade-log-stream {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: var(--h-log);
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    background: var(--bg-inset);
+    border: 1px solid var(--fg);
+    padding: 4px 6px;
+}
+
+.trade-log-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    border-bottom: 1px dotted var(--rule);
+    padding: 1.5px 0;
+}
+
+
+
+.log-time { color: var(--warn); font-weight: bold; }
+.log-chip {
+    padding: 1px 3px;
+    font-weight: bold;
+    border-radius: 1px;
+    font-size: 9px;
+}
+
+/* --- SECTION 4: LIVE ANALYTICS TABLE --- */
+.analytics-metric-table {
+    width: 100%;
+    font-size: 10px;
+    border-collapse: collapse;
+    margin-top: 3px;
+}
+.analytics-metric-table td {
+    /* 6 baris harus muat di --h-kpi. 230 - 2*(12+34) - 8 = 130px tersedia;
+       padding 1px + font 10px memberi ~15px per baris = 90px, sisa aman. */
+    padding: 1px 3px;
+    border-bottom: 1px solid var(--line-soft);
+}
+.analytics-metric-table td:last-child {
+    text-align: right;
+    font-weight: bold;
+}
+
+/* --- FOOTER TICKER --- */
+.hud-footer {
+    background: var(--fg);
+    color: var(--bg-app);
+    padding: 4px 8px;
+    font-size: 10px;
+    display: flex;
+    justify-content: space-between;
+    letter-spacing: 0.3px;
+}
+
+/* Utility classes */
+.text-green { color: var(--pos) !important; }
+.text-red { color: var(--neg) !important; }
+.text-amber { color: var(--warn) !important; }
+
+/* ============================================================
+   MOTION — hanya untuk state yang benar-benar berubah
+   ============================================================
+   Setelah semua keyframes dihapus, dua sisanya di bawah satu-satunya
+   animasi yang tersisa, dan keduanya menencode fakta:
+
+     - `.pulse-live`  : hanya pada satu span LIVE di topbar. Bot hidup.
+     - `.pulse-halt`  : hanya ketika pipeline benar-benar berhenti.
+
+   Segala lain (PnL glow, orderbook shimmer, log slide-in, arrow
+   Dulu hanya neural_flow.css yang punya blok ini; style.css tidak
+   sementara semuanya membanjiri attention yang seharusnya buat angka.
+   */
+
+/* Badge LIVE di topbar — satu-satunya denyut "sistem hidup". */
+.pulse-live {
+    animation: hud-pulse-live 1.8s ease-in-out infinite;
+}
+@keyframes hud-pulse-live {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+
+
+/*
+ * `.text-muted` dipakai callback untuk nilai open-PnL posisi, tapi
+ * tidak pernah didefinisikan di CSS — artinya nilai itu dirender
+ * dengan bobot penuh seolah-olah normal, bukan recessed. Callback
+ * memakai kelas ini sebagai sinyal "tidak aktif", jadi harus ada.
+ */
+.text-muted { color: var(--fg-muted); }
+.text-amber { color: var(--warn); }
+.text-red   { color: var(--neg); }
+
+/* ============================================================
+   AKSESIBILITAS — global reduced-motion
+   ============================================================
+   Dulu hanya neural_flow.css yang punya blok ini; style.css tidak
+   punya satu pun. Sekarang setiap keyframe di kedua file bisa
+   dimatikan lewat satu preferensi sistem.
+   */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ============================================================
+   ZONA — tinggi dan isi per zona
+   ============================================================
+   Setiap zona menyatakan tingginya sendiri lewat token. Tidak ada lagi
+   angka px yang ditulis inline di dua file berbeda; `div` yang punya
+   tinggi, `figure` tidak pernah ikut mengklaim.
+   */
+
+.wallet-rail { height: var(--h-rail); }
+
+/* Rail metrics: PnL kiri, angka pendukung kanan, satu baris.
+   Tinggi rail (62px) dikurangi header (22) + padding (8) = 32px untuk
+   ISI. Hero 34px + label 11px sudah 45px, jadi PnL TIDAK bisa tallest
+   stack — makanya label+sub dibuat satu kolom rapat dan angka lain
+   distressing sejajar horizontal. */
+.wallet-rail .hud-panel-body { padding: var(--sp-1) var(--sp-4); }
+.rail-body {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--sp-6);
+    overflow: hidden;
+}
+.rail-hero {
+    display: flex;
+    align-items: baseline;
+    gap: var(--sp-3);
+    flex: 0 0 auto;
+    min-width: 0;
+}
+.rail-label {
+    font-size: var(--fs-micro);
+    font-weight: bold;
+    color: var(--fg-muted);
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+}
+.rail-hero .giant-pnl {
+    font-size: 26px;
+    line-height: 1;
+    white-space: nowrap;
+}
+.rail-hero .wallet-subtext {
+    font-size: var(--fs-micro);
+    color: var(--fg-muted);
+    white-space: nowrap;
+}
+.rail-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-6);
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+}
+.rail-stat { text-align: right; white-space: nowrap; }
+.rail-stat .stat-label { font-size: var(--fs-micro); }
+.rail-stat .stat-val { font-size: var(--fs-sm); }
+
+.zone2-stack > .hud-panel,
+.p-stack > .hud-panel {
+    height: 100%;
+    min-height: 0;
+}
+
+.pipe-strip { height: var(--h-pipe); }
+.pipe-strip .hud-panel-body { padding: 0 var(--sp-3); }
+
+.zone3-cell { height: var(--h-zone3); }
+.zone3-cell .hud-panel-body { padding: var(--sp-2); }
+
+/* Dashed / scanline ornament di heading dihapus; header kini 1px rule. */
+.hud-panel-header {
+    min-height: var(--h-head);
+    background: var(--fg);
+    color: var(--white);
+    padding: 0 var(--sp-3);
+    font-size: var(--fs-label);
+    letter-spacing: 0.4px;
+}
+.hud-panel-header .header-tag { color: var(--bg-inset); font-size: var(--fs-micro); }
+
+/* Panel tidak lagi "mengangkat" diri saat hover. Grafik bukan tombol, dan
+   hover yang cuma menambah shadow cuma membuat baris grid kehilangan
+   baseline. */
+.hud-panel:hover { background: var(--bg-card); }
+
+/* Chip arah di trade log — datar, tanpa denyut.
+   Warna berasal dari token semantik: hijau = BUY, merah = SELL. */
+.log-chip-buy  { background: var(--pos-wash); color: var(--pos-text); border: 1px solid var(--pos-ink); }
+.log-chip-sell { background: var(--neg-wash); color: var(--neg-text); border: 1px solid var(--neg-ink); }
+
+/* --- PIPELINE STRIP ------------------------------------------------
+   Strip 44px (header 22 + isi 22). Enam node + lima panah tidak muat
+   di 22px kalau node-nya 100px fixed seperti dulu - butuh 700px.
+   Sekarang node ikut flex (`flex: 1 1 0; min-width: 0`) sehingga
+   pembagian lebar terjadi otomatis di ruang yang benar-benar ada. */
+.pipe-strip .hud-panel-body { overflow: hidden; }
+
+/* --- EMPTY STATE ----------------------------------------------------
+   Panel kosong harus terlihat SENGAJA kosong, bukan seperti panel yang
+   gagal dirender. Satu baris utama + satu baris penjelas, rata tengah. */
+.empty-note {
+    font-size: var(--fs-label);
+    font-weight: bold;
+    color: var(--fg-muted);
+    letter-spacing: 0.5px;
+    padding: var(--sp-5) var(--sp-3) 0;
+    text-align: center;
+}
+.empty-note-sub {
+    font-size: var(--fs-micro);
+    color: var(--fg-dim);
+    padding: var(--sp-1) var(--sp-3) var(--sp-4);
+    text-align: center;
+}
+
+/* --- ASSET SELECTOR ------------------------------------------------
+   Dua kesalahan beruntun terjadi di sini, dan keduanya berakar sama:
+   selector ditulis dari tebakan, bukan dari melihat DOM sungguhan.
+
+   1. Dash 4 (dash 4.4.1) sudah tidak memakai react-select. PR
+      plotly/dash#3440 mengganti Dropdown ke komponen custom berbasis
+      Radix dan menghapus seluruh kelas `.Select-*`.
+
+   2. `className` pada dcc.Dropdown menempel pada elemen yang SAMA
+      yang membawa `dash-dropdown`:
+
+          <button class="dash-dropdown symbol-select">
+
+      Jadi `.symbol-select .dash-dropdown` (descendant) tidak akan
+      PERNAH match — keduanya satu elemen, bukan nenek-cucu. Semua aturan
+      yang memakai pola itu diam-diam tidak berlaku, dan dropdown jatuh
+      ke gaya bawaan: font besar, warna biru, tidak nyambung dengan
+      header hitamnya.
+
+   Bentuk yang benar: `.symbol-select` untuk elemennya sendiri, lalu
+   `.symbol-select .dash-dropdown-*` hanya untuk anak yang benar-benar
+   ada di dalamnya (value, trigger, option, content).
+   Test `test_dropdown_uses_dash4_classes` menjaga keduanya.
+   */
+.symbol-select {
+    display: inline-block;
+    width: 112px;
+    height: 20px;
+    min-height: 20px;
+    vertical-align: middle;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    color: var(--fg);
+    background-color: var(--bg-inset);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    box-shadow: none;
+    text-align: left;
+    padding: 0 var(--sp-1);
+    cursor: pointer;
+}
+.symbol-select:hover {
+    border-color: var(--accent);
+    background-color: var(--bg-card);
+}
+.symbol-select:focus,
+.symbol-select:focus-visible {
+    border-color: var(--accent);
+    background-color: var(--bg-card);
+    outline: none;
+    box-shadow: none;
+}
+.symbol-select[data-state="open"] {
+    border-color: var(--accent);
+    background-color: var(--bg-card);
+}
+
+/* Nilai terpilih: anak di dalam tombol. */
+.symbol-select .dash-dropdown-value {
+    color: var(--fg);
+    font-size: var(--fs-label);
+    font-family: var(--font-mono);
+    font-weight: normal;
+    line-height: 18px;
+    background: none;
+    padding: 0;
+    height: auto;
+}
+/* <span> di dalam button tidak mewarisi font-size dari button secara
+   implisit — UA stylesheet memberi mereka nilai default sendiri. */
+.symbol-select .dash-dropdown-value span,
+.symbol-select .dash-dropdown-value-item,
+.symbol-select .dash-dropdown-value-item span {
+    font-size: var(--fs-label);
+    font-family: var(--font-mono);
+    color: var(--fg);
+}
+.symbol-select .dash-dropdown-value-item {
+    color: var(--fg);
+    font-size: var(--fs-label);
+}
+.symbol-select .dash-dropdown-placeholder {
+    color: var(--fg-muted);
+}
+
+/* Grid container = pemicu; root sudah di-style di atas. */
+.symbol-select .dash-dropdown-grid-container,
+.symbol-select .dash-dropdown-trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    height: 100%;
+    min-height: 0;
+    /* Tanpa ini grid anak dari button 20px jadi 32px dan tombol melebar. */
+    overflow: hidden;
+    background: none;
+    color: var(--fg);
+    border: 0;
+    font-size: var(--fs-label);
+}
+
+/* Ikonnya SVG inline, jadi warnanya datang dari `fill` pada elemen <svg>
+   itu sendiri — bukan dari `stroke`/`fill` pada <path> di dalamnya. */
+.symbol-select .dash-dropdown-trigger-icon {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 auto;
+    fill: var(--fg-muted);
+    stroke: var(--fg-muted);
+    color: var(--fg-muted);
+}
+
+/* Panel pilihan yang muncul saat diklik. */
+.symbol-select .dash-dropdown-content {
+    border: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--bg-inset);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+    box-shadow: none;
+    z-index: 60;
+}
+.symbol-select .dash-dropdown-options {
+    background: var(--bg-inset);
+    color: var(--fg);
+    font-size: var(--fs-label);
+}
+.symbol-select .dash-dropdown-option {
+    padding: 2px var(--sp-2);
+    background: var(--bg-inset);
+    color: var(--fg);
+    font-size: var(--fs-label);
+    font-family: var(--font-mono);
+}
+.symbol-select .dash-dropdown-option:hover,
+.symbol-select .dash-dropdown-option[data-highlighted] {
+    background: var(--bg-card);
+    color: var(--fg);
+}
+.symbol-select .dash-dropdown-search {
+    color: var(--fg);
+    background: var(--bg-inset);
+    border: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-label);
+}
+.symbol-select .dash-dropdown-search-container {
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--line-soft);
+}
+
+/* Tag timeframe di samping dropdown. */
+.tf-tag {
+    color: var(--pos);
+    font-size: var(--fs-micro);
+    margin-left: var(--sp-2);
+    font-weight: bold;
+}
+
+/* --- KELAS SEMANTIK YANG DIPAKAI LAYOUT ----------------------------
+   Dulu nilai warna ditulis inline per elemen, jadi palet ikut
+   liar ke mana-mana: 15 hex di hud.py, 30 di style.css. Sekarang
+   setiap warna punya satu nama dan satu tempat. */
+
+.spot-sym {
+    color: var(--fg-muted);
+    font-size: var(--fs-label);
+}
+.spot-edge {
+    color: var(--fg-muted);
+    font-size: var(--fs-micro);
+}
+.utc-clock {
+    font-weight: bold;
+    color: var(--fg);
+    font-size: var(--fs-label);
+}
+.tape-label {
+    font-weight: bold;
+    color: var(--fg);
+    margin-right: var(--sp-2);
+    font-size: var(--fs-label);
+}
+
+/* Baris sparkline: dua blok berdampingan di atas tabel KPI. */
+.spark-row {
+    display: flex;
+    gap: var(--sp-3);
+    border-bottom: 1px solid var(--line-soft);
+    padding-bottom: var(--sp-1);
+    margin-bottom: var(--sp-2);
+}
+.spark-label {
+    font-size: var(--fs-micro);
+    font-weight: bold;
+    color: var(--fg-muted);
+    letter-spacing: 0.3px;
+}
+
+/* Nada tahap pipeline. `title_style` inline pernah menimpa warna ini,
+   sekarang warna dibawa kelas yang sama dengan aksen di kiri kotak. */
+
+/* ============================================================
+   SYMBOL PNL — "where the money goes"
+   ============================================================
+   Menggantikan panel "Strategy Decision Tree" yang isinya 6 kotak
+   statis dengan badge yang selalu sama. Panel ini menjawab pertanyaan
+   yang tidak dijawab manapun di HUD: simbol mana yang membawa PnL dan
+   mana yang memakannya.
+
+   perbandingan antar baris terbaca langsung tanpa perlu angka.
+   perbandingan antarbaris terbaca langsung tanpa perlu angka.
+   */
+.symbol-pnl-panel { height: 180px; }
+.symbol-pnl-panel .hud-panel-header::after { margin-left: auto; }
+.symbol-pnl-panel .hud-panel-body {
+    padding: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.sympnl-list {
+    display: flex;
+    flex-direction: column;
+    font-family: var(--font-mono);
+}
+
+.sympnl-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 1px var(--sp-3);
+    border-bottom: 1px solid var(--line-soft);
+    font-size: var(--fs-micro);
+    line-height: 13px;
+}
+.sympnl-row:hover { background: var(--bg-inset); }
+
+.sympnl-sym {
+    flex: 0 0 52px;
+    color: var(--fg);
+    font-weight: bold;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Tanda kecil pada simbol yang masih punya posisi terbuka. */
+.sympnl-sym.live::after {
+    content: "*";
+    color: var(--accent);
+    margin-left: 2px;
+}
+
+.sympnl-track {
+    /* Track dibatasi 620px. Kalau ikut melar_FULL_WIDTH, bar ke-2 dan
+       ke-3 nyaris tak terlihat bedanya padahal PnL-nya berbeda 4 USDT.
+       Panjang bar harus bisa dibandingkan dengan mata. */
+    flex: 0 1 620px;
+    min-width: 120px;
+    height: 8px;
+    background: var(--rule-soft);
+    border: 1px solid var(--line-soft);
+}
+.sympnl-bar { height: 100%; }
+.sympnl-bar.pos  { background: var(--pos); }
+.sympnl-bar.neg  { background: var(--neg); }
+.sympnl-bar.flat { background: var(--fg-muted); }
+
+.sympnl-val {
+    flex: 0 0 58px;
+    text-align: right;
+    font-weight: bold;
+}
+.sympnl-val.pos  { color: var(--pos); }
+.sympnl-val.neg  { color: var(--neg); }
+.sympnl-val.flat { color: var(--fg-muted); }
+
+.sympnl-wr {
+    flex: 0 0 32px;
+    text-align: right;
+    color: var(--fg-muted);
+}
+.sympnl-n {
+    flex: 0 0 28px;
+    text-align: right;
+    color: var(--fg-muted);
+    font-size: 8px;
+}
+
+.sympnl-empty {
+    padding: var(--sp-5);
+    text-align: center;
+    font-size: var(--fs-micro);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+}
+
+/* Baris judul kolom. Dirender sebagai elemen nyata, bukan ::after, karena
+   ::after menabrak tag "LIVE" di kanan header. */
+.sympnl-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 1px var(--sp-3);
+    font-size: 8px;
+    color: var(--fg-muted);
+    letter-spacing: 0.4px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-card);
+    position: sticky;
+    top: 0;
+}
+.sympnl-head-sym { flex: 0 0 52px; font-weight: bold; }
+.sympnl-head-blank { flex: 0 1 620px; min-width: 120px; }
+.sympnl-head-val { flex: 0 0 58px; text-align: right; }
+.sympnl-head-wr  { flex: 0 0 32px; text-align: right; }
+.sympnl-head-n   { flex: 0 0 28px; text-align: right; }

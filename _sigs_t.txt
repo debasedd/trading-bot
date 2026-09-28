@@ -1,0 +1,375 @@
+
+########## trading/__init__.py  (1 lines) ##########
+
+########## trading/models.py  (86 lines) ##########
+   10  CLASS  class Side(str, Enum)
+   11    ASGN LONG = 'LONG'
+   12    ASGN SHORT = 'SHORT'
+   15  CLASS  class OrderType(str, Enum)
+   16    ASGN MARKET = 'MARKET'
+   17    ASGN LIMIT = 'LIMIT'
+   20  CLASS  class TradeAction(str, Enum)
+   21    ASGN OPEN_LONG = 'OPEN_LONG'
+   22    ASGN OPEN_SHORT = 'OPEN_SHORT'
+   23    ASGN CLOSE = 'CLOSE'
+   24    ASGN HOLD = 'HOLD'
+   27  CLASS  class CloseReason(str, Enum)
+   28    ASGN TP_HIT = 'TP_HIT'
+   29    ASGN SL_HIT = 'SL_HIT'
+   30    ASGN MANUAL = 'MANUAL'
+   31    ASGN LIQUIDATED = 'LIQUIDATED'
+   32    ASGN SIGNAL = 'SIGNAL'
+   36  CLASS  @dataclass
+   36  CLASS  class Order()
+   38    ANNF symbol: str
+   39    ANNF action: TradeAction
+   40    ANNF side: Optional[Side] = None
+   41    ANNF quantity: Optional[float] = None
+   42    ANNF leverage: int = 5
+   43    ANNF order_type: OrderType = OrderType.MARKET
+   44    ANNF stop_loss: Optional[float] = None
+   45    ANNF take_profit: Optional[float] = None
+   46    ANNF position_id: Optional[int] = None
+   47    ANNF reasoning: str = ''
+   52    ANNF price: Optional[float] = None
+   56  CLASS  @dataclass
+   56  CLASS  class TradeDecision()
+   58    ANNF action: TradeAction
+   59    ANNF symbol: str
+   60    ANNF side: Optional[Side] = None
+   61    ANNF confidence: float = 0.0
+   62    ANNF leverage: int = 5
+   63    ANNF stop_loss_pct: Optional[float] = None
+   64    ANNF take_profit_pct: Optional[float] = None
+   65    ANNF risk_pct: float = 0.02
+   66    ANNF reasoning: str = ''
+   67    ANNF signals: dict = field(default_factory=dict)
+   71  CLASS  @dataclass
+   71  CLASS  class PositionInfo()
+   73    ANNF id: int
+   74    ANNF symbol: str
+   75    ANNF side: str
+   76    ANNF entry_price: float
+   77    ANNF quantity: float
+   78    ANNF leverage: int
+   79    ANNF margin: float
+   80    ANNF liquidation_price: float
+   81    ANNF stop_loss: Optional[float]
+   82    ANNF take_profit: Optional[float]
+   83    ANNF unrealized_pnl: float
+   84    ANNF roe_pct: float
+   85    ANNF mark_price: float
+   86    ANNF duration: str
+
+########## trading/paper_engine.py  (876 lines) ##########
+   23  CONST  logger = get_logger('paper_engine')
+   26  CLASS  class VolatilityGateError(Exception)
+   40    METH def __init__(self, reason: str, meta: Optional[dict] = None)
+   46  CLASS  class PaperTradingEngine()
+   58    METH def __init__(self, event_bus: EventBus)
+   70    METH async def _get_repo(self) -> Repository
+   76    METH async def initialize(self)
+   98    METH def _register_candle_source(self, repo: "Repository") -> None
+  137    METH async def refresh_volatility_cache(self) -> None
+  155    METH def update_price(self, symbol: str, price: float)
+  159    METH def get_price(self, symbol: str) -> Optional[float]
+  181    METH async def execute_order(self, order: Order) -> Dict
+  209    METH def _tick_quality_guard(self, symbol: str, price: float, sl_pct: float)
+  270    METH def _resolve_tp_sl(self, symbol: str, order: "Order") -> tuple
+  332    METH async def _diagnose_open_failure(
+  372    METH async def _execute_open(self, order: Order, price: float) -> Dict
+  687    METH async def _execute_close(self, order: Order, price: float) -> Dict
+  810    METH def _describe_failures(failed: List[dict]) -> str
+  822    METH async def check_positions(self)
+  835    METH async def get_account_summary(self) -> Dict
+
+########## trading/position_manager.py  (453 lines) ##########
+   22  CONST  logger = get_logger('position_manager')
+   25  CLASS  class PositionManager()
+   35    METH def __init__(self, event_bus: EventBus, risk_manager: RiskManager)
+   41    METH async def _get_repo(self) -> Repository
+   47    METH async def open_position(
+  150    METH async def close_position(
+  298    METH async def batch_close_positions(
+  326    METH async def update_positions(self, prices: Dict[str, float])
+  366    METH def _should_liquidate(self, pos: dict, current_price: float) -> bool
+  372    METH def _sl_hit(self, pos: dict, price: float) -> bool
+  378    METH def _tp_hit(self, pos: dict, price: float) -> bool
+  384    METH async def _liquidate(self, pos: dict, price: float)
+  420    METH async def get_open_position_count(self) -> int
+  425    METH async def get_total_unrealized_pnl(self) -> float
+  430    METH async def get_total_open_margin(self) -> float
+  436    METH async def take_balance_snapshot(self)
+
+########## trading/risk_manager.py  (429 lines) ##########
+   11  CONST  logger = get_logger('risk_manager')
+   16  CONST  PRICE_QUANT = Decimal('0.00000001')
+   17  CONST  MONEY_QUANT = Decimal('0.01')
+   18  CONST  QTY_QUANT = Decimal('0.00001')
+   21  CLASS  class RiskManager()
+   31    METH def __init__(self, initial_balance: float = 0.0)
+   47    METH def initial_balance(self) -> float
+   51    METH def set_initial_balance(self, value: float) -> None
+   64    METH def calculate_position_size(
+  133    METH def calculate_liquidation_price(
+  157    METH def calculate_stop_loss(
+  181    METH def calculate_take_profit(
+  202    METH def calculate_fee(self, quantity: float, price: float, fee_type: str = "TAKER") -> float
+  242    METH def calculate_pnl(
+  273    METH def validate_trade(
+  340    METH def calculate_scalp_position_size(
+  380    METH def kelly_criterion(self, win_rate: float, avg_win: float, avg_loss: float) -> float
+  397    METH def calculate_max_drawdown(self, equity_history: List[float]) -> float
+  414    METH def calculate_sharpe_ratio(
+
+########## trading/live/client.py  (493 lines) ##########
+   30  CONST  logger = get_logger('live_client')
+   34  CLASS  @dataclass
+   34  CLASS  class OrderOutcome()
+   44    ANNF ok: bool
+   45    ANNF filled_size: float = 0.0
+   46    ANNF avg_price: float = 0.0
+   47    ANNF order_id: Optional[int] = None
+   48    ANNF error: Optional[str] = None
+   49    ANNF raw: Any = None
+   51    METH def describe(self) -> str
+   59  FUNC   def parse_order_response(raw: Any) -> OrderOutcome
+   89  CLASS  class LiveExchange()
+   97    METH def __init__(
+  160    METH def get_account_state(self) -> Dict[str, Any]
+  164    METH def free_collateral(self) -> float
+  186    METH def positions(self) -> List[Dict[str, Any]]
+  194    METH def total_notional(self) -> float
+  211    METH def symbol_notional(self, coin: str) -> float
+  226    METH def rate_limit(self) -> Dict[str, Any]
+  237    METH def open_orders(self) -> List[Dict[str, Any]]
+  242    METH def asset_rules(self) -> Dict[str, Dict[str, Any]]
+  299    METH def quantize_size(self, coin: str, size: float) -> float
+  341    METH def quantize_price(self, coin: str, price: float) -> float
+  362    METH def set_leverage(self, coin: str, leverage: int, is_cross: bool = True) -> Any
+  372    METH def place_limit_order(
+  418    METH def place_trigger_order(
+  462    METH def cancel(self, coin: str, oid: int) -> Any
+  465    METH def mid_price(self, coin: str) -> float
+  483    METH def cancel_all(self, coin: str) -> Any
+
+########## trading/live/console.py  (751 lines) ##########
+   32  CONST  logger = get_logger('live_console')
+   34  CONST  Mode = str
+   38  CONST  CONFIRM_PHRASE = 'SAYA MENGERTI'
+   42  CLASS  @dataclass
+   42  CLASS  class ModeDecision()
+   45    ANNF mode: Mode
+   46    ANNF private_key: Optional[str] = None
+   47    ANNF address: Optional[str] = None
+   48    ANNF reason: str = ''
+   49    ANNF refused: bool = False
+   52  FUNC   def typed_addr_mismatch(shown: Optional[str], typed: Optional[str]) -> bool
+   65  FUNC   def derive_address(private_key: str) -> Optional[str]
+   78  FUNC   def decide_mode(
+  140  CONST  LINE = '=' * 68
+  141  CONST  THIN = '-' * 68
+  143  CONST  GREY = '\x1b[38;5;244m'
+  144  CONST  DIM = '\x1b[38;5;240m'
+  145  CONST  RESET = '\x1b[0m'
+  146  CONST  RED = '\x1b[1;31m'
+  147  CONST  GREEN = '\x1b[1;32m'
+  150  FUNC   def _out(text: str = "") -> None
+  165  FUNC   def _read(prompt: str) -> str
+  172  FUNC   def interactive() -> bool
+  187  FUNC   def _pause(enter_continues: bool = True) -> None
+  208  FUNC   def _read_secret(prompt: str) -> str
+  225  FUNC   def limits_summary(cfg: LiveConfig) -> List[str]
+  238  FUNC   def mode_options(cfg: LiveConfig, has_key: bool)
+  261  FUNC   def show_banner() -> None
+  287  FUNC   def _ask_mode_plain(cfg: LiveConfig) -> ModeDecision
+  340  FUNC   def _show_wallet_plain(cfg: LiveConfig, mode: str) -> Optional[dict]
+  357  FUNC   def _make_phrase_validator(field)
+  364  FUNC   def _make_address_validator(field, address: str)
+  372  FUNC   def _show_wallet(cfg: LiveConfig, mode: str) -> Optional[dict]
+  405  FUNC   def ask_mode(cfg: LiveConfig) -> ModeDecision
+  462  FUNC   def _do_confirmations(choice: str, info: dict) -> Optional[ModeDecision]
+  491  CONST  EDITABLE = (('max_order_notional', 'Order maks (USDC)', 'float', 10.0, 100000.0), ('max_position_notional', 'Posisi maks per simbol (USDC)', 'float', 10.0, 1000000.0), ('max_total_notional', 'Total eksposur maks (USDC)', 'float', 10.0, 10000000.0), ('max_daily_orders', 'Order per hari', 'int', 1, 100000), ('max_daily_loss', 'Stop rugi harian (USDC)', 'float', 1.0, 1000000.0), ('min_free_collateral', 'Collateral minimum (USDC)', 'float', 0.0, 1000000.0), ('max_consecutive_errors', 'Error beruntun sebelum stop', 'int', 1, 100))
+  505  FUNC   def validate_rule(field: str, value, kind: str, lo: float, hi: float)
+  532  FUNC   def check_consistency(cfg: LiveConfig) -> List[str]
+  559  FUNC   def _format_value(value) -> str
+  565  FUNC   def rule_options(cfg: LiveConfig)
+  587  FUNC   def edit_rules(cfg: LiveConfig) -> LiveConfig
+  622  FUNC   def _edit_field_tui(cfg: LiveConfig, field: str, screen) -> None
+  654  FUNC   def edit_rules_plain(cfg: LiveConfig) -> LiveConfig
+  722  FUNC   def _edit_window(cfg: LiveConfig, screen=None) -> None
+
+########## trading/live/engine.py  (757 lines) ##########
+   34  CONST  logger = get_logger('live_engine')
+   38  CLASS  @dataclass
+   38  CLASS  class LivePosition()
+   41    ANNF symbol: str
+   42    ANNF coin: str
+   43    ANNF side: str
+   44    ANNF size: float
+   45    ANNF entry_price: float
+   46    ANNF stop_loss: float
+   47    ANNF take_profit: float
+   48    ANNF leverage: int
+   49    ANNF sl_order_id: Optional[int] = None
+   50    ANNF tp_order_id: Optional[int] = None
+   54  CLASS  @dataclass
+   54  CLASS  class LiveEngine()
+   62    ANNF gate: SafetyGate
+   63    ANNF exchange: LiveExchange
+   64    ANNF cfg: LiveConfig
+   65    ANNF positions: Dict[str, LivePosition] = field(default_factory=dict)
+   70    ANNF now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+   74    METH async def reconcile(self) -> Dict[str, Any]
+  134    METH def _fetch_remote_positions(self) -> List[Dict[str, Any]]
+  172    METH def _sizes_match(local: LivePosition, remote: Dict[str, Any]) -> bool
+  188    METH async def _remote_context(self, coin: str) -> Dict[str, float]
+  204    METH async def submit_order(
+  351    METH async def _attach_protection(
+  421    METH async def check_pending_fills(self) -> List[Dict[str, Any]]
+  518    METH async def health_check(self) -> Dict[str, Any]
+  603    METH async def run_loop(self, interval: float = 5.0,
+  655    METH async def emergency_flat(self, reason: str = "manual") -> Dict[str, Any]
+
+########## trading/live/executor.py  (190 lines) ##########
+   25  CONST  logger = get_logger('live_executor')
+   28  FUNC   def make_cloid(prefix: str = "tb") -> str
+   39  FUNC   def coin_of(symbol: str) -> str
+   50  CLASS  class LiveExecutor()
+   53    METH def __init__(self, engine: LiveEngine)
+   56    METH def update_price(self, symbol: str, price: float) -> None
+   66    METH async def execute_order(self, order) -> Dict[str, Any]
+   77    METH async def _open(self, order) -> Dict[str, Any]
+  127    METH async def _close(self, order) -> Dict[str, Any]
+  171    METH def _price_for(order) -> float
+
+########## trading/live/safety.py  (423 lines) ##########
+   27  CONST  logger = get_logger('live_safety')
+   30  CLASS  class Blocker(str, Enum)
+   33    ASGN LIVE_DISABLED = 'live trading tidak dinyalakan'
+   34    ASGN NOT_CONFIRMED = 'variabel konfirmasi live tidak bernilai 1'
+   35    ASGN MISSING_KEY = 'private key tidak ada di environment'
+   36    ASGN OUTSIDE_WINDOW = 'di luar jendela waktu trading (UTC)'
+   37    ASGN KILL_SWITCH = 'kill switch aktif'
+   38    ASGN ORDER_TOO_LARGE = 'nilai order melebihi batas'
+   39    ASGN POSITION_TOO_LARGE = 'nilai posisi melebihi batas'
+   40    ASGN EXPOSURE_TOO_LARGE = 'total eksposur melebihi batas'
+   41    ASGN DAILY_ORDER_LIMIT = 'batas order harian tercapai'
+   42    ASGN DAILY_LOSS_LIMIT = 'batas kerugian harian tercapai'
+   43    ASGN TOO_MANY_ERRORS = 'terlalu banyak error beruntun'
+   44    ASGN COLLATERAL_TOO_LOW = 'collateral bebas di bawah minimum'
+   45    ASGN RECONCILIATION_FAILED = 'rekonsiliasi posisi dengan bursa gagal'
+   46    ASGN INVALID_INPUT = 'input order tidak valid'
+   47    ASGN MISSING_CLOID = 'order opening tanpa client order id'
+   48    ASGN LEVERAGE_TOO_HIGH = 'leverage melebihi batas bursa'
+   49    ASGN COUNTER_STATE_UNREADABLE = 'state penghitung harian tidak bisa dibaca'
+   53  CLASS  @dataclass
+   53  CLASS  class OrderRequest()
+   56    ANNF symbol: str
+   57    ANNF is_buy: bool
+   58    ANNF size: float
+   59    ANNF price: float
+   60    ANNF is_close: bool = False
+   61    ANNF reduce_only: bool = False
+   64    METH def notional(self) -> float
+   69  CLASS  @dataclass
+   69  CLASS  class DayCounters()
+   84    ANNF day_utc: str = ''
+   85    ANNF orders_sent: int = 0
+   86    ANNF realized_pnl: float = 0.0
+   87    ANNF consecutive_errors: int = 0
+   88    ANNF _unreadable: bool = field(default=False, repr=False)
+   91    METH def readable(self) -> bool
+   95    METH def to_dict(self) -> Dict[str, Any]
+  103    METH def load(self, path) -> None
+  127    METH def save(self, path) -> bool
+  145    METH def rollover_if_needed(self, now: Optional[datetime] = None) -> None
+  159  CLASS  class SafetyGate()
+  168    METH def __init__(self, cfg: LiveConfig, env: Optional[dict] = None,
+  193    METH def persist(self) -> bool
+  200    METH def private_key(self) -> Optional[str]
+  213    METH def redact(self, text: str) -> str
+  231    METH def in_live_window(self, now: Optional[datetime] = None) -> bool
+  247    METH def master_blockers(self, now: Optional[datetime] = None) -> List[Blocker]
+  300    METH def order_blockers(
+  347    METH def can_send(
+  384    METH def engage_kill_switch(self, reason: str) -> None
+  397    METH def record_error(self) -> None
+  410    METH def record_success(self) -> None
+  415    METH def record_realized_pnl(self, pnl: float) -> None
+  419    METH def record_order_sent(self) -> None
+
+########## trading/live/tui.py  (572 lines) ##########
+   33  CONST  UP = 'up'
+   34  CONST  DOWN = 'down'
+   35  CONST  LEFT = 'left'
+   36  CONST  RIGHT = 'right'
+   37  CONST  ENTER = 'enter'
+   38  CONST  ESC = 'esc'
+   39  CONST  BACKSPACE = 'backspace'
+   40  CONST  CTRL_C = 'ctrl_c'
+   42  CONST  WIDTH = 68
+   45  CONST  _WINDOWS_KEYS = {'H': UP, 'P': DOWN, 'M': RIGHT, 'K': LEFT, 'G': 'home', 'O': 'end', 'I': 'pageup', 'Q': 'pagedown', 'S': 'delete', 'R': 'insert'}
+   52  CLASS  class NotATerminal(RuntimeError)
+   57  FUNC   def _vt_enabled() -> bool
+   61  FUNC   def enable_vt_processing() -> bool
+   89  CONST  ANSI_CLEAR = '\x1b[2J\x1b[H'
+   90  CONST  ANSI_HOME = '\x1b[H'
+   91  CONST  ANSI_ERASE_DOWN = '\x1b[J'
+   92  CONST  ANSI_ERASE_LINE = '\x1b[K'
+   93  CONST  ANSI_HIDE_CURSOR = '\x1b[?25l'
+   94  CONST  ANSI_SHOW_CURSOR = '\x1b[?25h'
+   97  CLASS  class Screen()
+  105    METH def __init__(self, width: int = WIDTH)
+  109    METH def __enter__(self) -> "Screen"
+  113    METH def __exit__(self, *exc) -> None
+  116    METH def start(self) -> None
+  121    METH def stop(self) -> None
+  132    METH def draw(self, lines: Sequence[str]) -> None
+  147    METH def clear(self) -> None
+  151  FUNC   def _pad(text: str, width: int) -> str
+  156  FUNC   def display_width(text: str) -> int
+  175  FUNC   def _write(text: str) -> None
+  184  FUNC   def is_tty() -> bool
+  191  FUNC   def _read_windows() -> Optional[str]
+  213  FUNC   def _read_posix() -> Optional[str]
+  239  CLASS  class KeyReader()
+  247    METH def __init__(self)
+  251    METH def __enter__(self) -> "KeyReader"
+  256    METH def __exit__(self, *exc) -> None
+  267    METH def _enter_raw(self) -> None
+  278    METH def get(self) -> Optional[str]
+  284    METH def wait(self) -> str
+  293  FUNC   def _sleep() -> None
+  301  CLASS  @dataclass
+  301  CLASS  class Option()
+  304    ANNF label: str
+  305    ANNF value: object = None
+  306    ANNF detail: str = ''
+  307    ANNF enabled: bool = True
+  308    ANNF danger: bool = False
+  312  CLASS  @dataclass
+  312  CLASS  class MenuResult()
+  313    ANNF selected: Optional[Option] = None
+  314    ANNF cancelled: bool = False
+  317  FUNC   def _box_top(title: str, width: int = WIDTH) -> str
+  324  FUNC   def _box_bottom(width: int = WIDTH) -> str
+  328  CLASS  class Menu()
+  336    METH def __init__(self, options: Sequence[Option])
+  341    METH def _first_enabled(self) -> int
+  347    METH def _move(self, delta: int) -> None
+  363    METH def step(self, key: str) -> Optional[MenuResult]
+  387    METH def render(self, title: str, footer: str = "",
+  427  CLASS  class TextField()
+  436    METH def __init__(self, prompt: str, secret: bool = False,
+  445    METH def _validate(self, text: str) -> None
+  448    METH def step(self, key: str) -> Optional[object]
+  481    METH def display(self) -> str
+  495  CLASS  class _Cancelled()
+  498    METH def __repr__(self) -> str:  # pragma: no cover
+  502  CONST  _CANCELLED = _Cancelled()
+  506  FUNC   def run_menu(title: str, options: Sequence[Option], footer: str = "",
+  526  FUNC   def run_text(prompt: str, secret: bool = False, max_length: int = 200,
+  545  FUNC   def is_cancelled(value: object) -> bool
+  550  FUNC   def fallback_prompt(prompt: str, secret: bool = False) -> str
+  568  FUNC   def render_keymap() -> str

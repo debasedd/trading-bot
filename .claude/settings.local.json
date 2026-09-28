@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:binance-docs.github.io)",
+      "WebFetch(domain:bybit-exchange.github.io)",
+      "WebFetch(domain:www.okx.com)",
+      "WebFetch(domain:developers.binance.com)",
+      "Bash(dir /s /b)",
+      "Bash(python -m unittest discover tests)",
+      "Bash(where python *)",
+      "Bash(pip list *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import pandas_ta\")"
+    ]
+  }
+}

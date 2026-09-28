@@ -1,0 +1,1762 @@
+{
+ "empty@1280": {
+  "endpoint_mismatch": [],
+  "node_count": 10,
+  "label_gap_min": 23.99,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 36.5,
+  "marker_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 8,
+  "edge_len_mean": 50.24,
+  "edge_len_max": 50.24,
+  "edges_over_150": 0,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [],
+  "edge_through_label": [],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    4.74
+   ],
+   [
+    "RISK",
+    6.61
+   ],
+   [
+    "RF ML",
+    6.61
+   ],
+   [
+    "SENT",
+    6.61
+   ],
+   [
+    "FLOW",
+    6.61
+   ],
+   [
+    "MACRO",
+    6.61
+   ],
+   [
+    "TECH",
+    59.83
+   ],
+   [
+    "EXEC",
+    59.83
+   ],
+   [
+    "YFI",
+    59.83
+   ],
+   [
+    "COIN",
+    59.83
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 274.5,
+  "graph_w": 302.5,
+  "plot_w": 274.5,
+  "plot_h": 204,
+  "pxu_x": 12.4773,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok@1280": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 23.99,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 26.87,
+  "marker_gap_worst_pair": [
+   "ETH",
+   "HYPE"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 77.57,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    3.1
+   ],
+   [
+    "RISK",
+    3.61
+   ],
+   [
+    "RF ML",
+    3.61
+   ],
+   [
+    "SENT",
+    3.61
+   ],
+   [
+    "FLOW",
+    3.99
+   ],
+   [
+    "MACRO",
+    3.61
+   ],
+   [
+    "TECH",
+    56.83
+   ],
+   [
+    "EXEC",
+    56.83
+   ],
+   [
+    "YFI",
+    57.21
+   ],
+   [
+    "COIN",
+    57.21
+   ],
+   [
+    "BTC",
+    196.46
+   ],
+   [
+    "ETH",
+    146.04
+   ],
+   [
+    "SOL",
+    194.96
+   ],
+   [
+    "XRP",
+    147.16
+   ],
+   [
+    "BNB",
+    144.54
+   ],
+   [
+    "DOGE",
+    146.41
+   ],
+   [
+    "NEAR",
+    195.34
+   ],
+   [
+    "ONDO",
+    144.91
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    193.84
+   ],
+   [
+    "XPL",
+    196.31
+   ],
+   [
+    "ENA",
+    145.44
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 274.5,
+  "graph_w": 302.5,
+  "plot_w": 274.5,
+  "plot_h": 204,
+  "pxu_x": 12.4773,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok-maxmark@1280": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 23.99,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 25.67,
+  "marker_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 77.57,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    3.1
+   ],
+   [
+    "RISK",
+    2.86
+   ],
+   [
+    "RF ML",
+    2.86
+   ],
+   [
+    "SENT",
+    2.86
+   ],
+   [
+    "FLOW",
+    2.86
+   ],
+   [
+    "MACRO",
+    2.86
+   ],
+   [
+    "TECH",
+    56.08
+   ],
+   [
+    "EXEC",
+    56.08
+   ],
+   [
+    "YFI",
+    56.08
+   ],
+   [
+    "COIN",
+    56.08
+   ],
+   [
+    "BTC",
+    197.21
+   ],
+   [
+    "ETH",
+    147.54
+   ],
+   [
+    "SOL",
+    197.21
+   ],
+   [
+    "XRP",
+    147.54
+   ],
+   [
+    "BNB",
+    147.54
+   ],
+   [
+    "DOGE",
+    147.54
+   ],
+   [
+    "NEAR",
+    197.21
+   ],
+   [
+    "ONDO",
+    147.54
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    197.21
+   ],
+   [
+    "XPL",
+    197.21
+   ],
+   [
+    "ENA",
+    147.54
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 274.5,
+  "graph_w": 302.5,
+  "plot_w": 274.5,
+  "plot_h": 204,
+  "pxu_x": 12.4773,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "empty@1366": {
+  "endpoint_mismatch": [],
+  "node_count": 10,
+  "label_gap_min": 27.81,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 40.32,
+  "marker_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 8,
+  "edge_len_mean": 54.04,
+  "edge_len_max": 54.05,
+  "edges_over_150": 0,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [],
+  "edge_through_label": [],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    4.74
+   ],
+   [
+    "RISK",
+    6.61
+   ],
+   [
+    "RF ML",
+    6.61
+   ],
+   [
+    "SENT",
+    6.61
+   ],
+   [
+    "FLOW",
+    6.61
+   ],
+   [
+    "MACRO",
+    6.61
+   ],
+   [
+    "TECH",
+    59.83
+   ],
+   [
+    "EXEC",
+    59.83
+   ],
+   [
+    "YFI",
+    59.83
+   ],
+   [
+    "COIN",
+    59.83
+   ]
+  ],
+  "label_widest": 31.203123092651367,
+  "plot_w_px": 296,
+  "graph_w": 324,
+  "plot_w": 296,
+  "plot_h": 204,
+  "pxu_x": 13.4545,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok@1366": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 27.81,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 26.87,
+  "marker_gap_worst_pair": [
+   "ETH",
+   "HYPE"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 79.09,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    2.15
+   ],
+   [
+    "RISK",
+    3.61
+   ],
+   [
+    "RF ML",
+    3.61
+   ],
+   [
+    "SENT",
+    3.61
+   ],
+   [
+    "FLOW",
+    3.99
+   ],
+   [
+    "MACRO",
+    3.61
+   ],
+   [
+    "TECH",
+    56.83
+   ],
+   [
+    "EXEC",
+    56.83
+   ],
+   [
+    "YFI",
+    57.21
+   ],
+   [
+    "COIN",
+    57.21
+   ],
+   [
+    "BTC",
+    196.46
+   ],
+   [
+    "ETH",
+    146.04
+   ],
+   [
+    "SOL",
+    194.96
+   ],
+   [
+    "XRP",
+    147.16
+   ],
+   [
+    "BNB",
+    144.54
+   ],
+   [
+    "DOGE",
+    146.41
+   ],
+   [
+    "NEAR",
+    195.34
+   ],
+   [
+    "ONDO",
+    144.91
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    193.84
+   ],
+   [
+    "XPL",
+    196.31
+   ],
+   [
+    "ENA",
+    145.44
+   ]
+  ],
+  "label_widest": 31.203123092651367,
+  "plot_w_px": 296,
+  "graph_w": 324,
+  "plot_w": 296,
+  "plot_h": 204,
+  "pxu_x": 13.4545,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok-maxmark@1366": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 27.81,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 25.67,
+  "marker_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 79.09,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    2.15
+   ],
+   [
+    "RISK",
+    2.86
+   ],
+   [
+    "RF ML",
+    2.86
+   ],
+   [
+    "SENT",
+    2.86
+   ],
+   [
+    "FLOW",
+    2.86
+   ],
+   [
+    "MACRO",
+    2.86
+   ],
+   [
+    "TECH",
+    56.08
+   ],
+   [
+    "EXEC",
+    56.08
+   ],
+   [
+    "YFI",
+    56.08
+   ],
+   [
+    "COIN",
+    56.08
+   ],
+   [
+    "BTC",
+    197.21
+   ],
+   [
+    "ETH",
+    147.54
+   ],
+   [
+    "SOL",
+    197.21
+   ],
+   [
+    "XRP",
+    147.54
+   ],
+   [
+    "BNB",
+    147.54
+   ],
+   [
+    "DOGE",
+    147.54
+   ],
+   [
+    "NEAR",
+    197.21
+   ],
+   [
+    "ONDO",
+    147.54
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    197.21
+   ],
+   [
+    "XPL",
+    197.21
+   ],
+   [
+    "ENA",
+    147.54
+   ]
+  ],
+  "label_widest": 31.203123092651367,
+  "plot_w_px": 296,
+  "graph_w": 324,
+  "plot_w": 296,
+  "plot_h": 204,
+  "pxu_x": 13.4545,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "empty@1600": {
+  "endpoint_mismatch": [],
+  "node_count": 10,
+  "label_gap_min": 38.53,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 41.22,
+  "marker_gap_worst_pair": [
+   "RISK",
+   "TECH"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 8,
+  "edge_len_mean": 64.73,
+  "edge_len_max": 64.74,
+  "edges_over_150": 0,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [],
+  "edge_through_label": [],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    4.74
+   ],
+   [
+    "RISK",
+    6.61
+   ],
+   [
+    "RF ML",
+    6.61
+   ],
+   [
+    "SENT",
+    6.61
+   ],
+   [
+    "FLOW",
+    6.61
+   ],
+   [
+    "MACRO",
+    6.61
+   ],
+   [
+    "TECH",
+    59.83
+   ],
+   [
+    "EXEC",
+    59.83
+   ],
+   [
+    "YFI",
+    59.83
+   ],
+   [
+    "COIN",
+    59.83
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 354.5,
+  "graph_w": 382.5,
+  "plot_w": 354.5,
+  "plot_h": 204,
+  "pxu_x": 16.1136,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok@1600": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 37.17,
+  "label_gap_worst_pair": [
+   "XRP",
+   "NEAR"
+  ],
+  "marker_gap_min": 26.87,
+  "marker_gap_worst_pair": [
+   "ETH",
+   "HYPE"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 83.36,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    2.11
+   ],
+   [
+    "RISK",
+    3.61
+   ],
+   [
+    "RF ML",
+    3.61
+   ],
+   [
+    "SENT",
+    3.61
+   ],
+   [
+    "FLOW",
+    3.99
+   ],
+   [
+    "MACRO",
+    3.61
+   ],
+   [
+    "TECH",
+    56.83
+   ],
+   [
+    "EXEC",
+    56.83
+   ],
+   [
+    "YFI",
+    57.21
+   ],
+   [
+    "COIN",
+    57.21
+   ],
+   [
+    "BTC",
+    196.46
+   ],
+   [
+    "ETH",
+    146.04
+   ],
+   [
+    "SOL",
+    194.96
+   ],
+   [
+    "XRP",
+    147.16
+   ],
+   [
+    "BNB",
+    144.54
+   ],
+   [
+    "DOGE",
+    146.41
+   ],
+   [
+    "NEAR",
+    195.34
+   ],
+   [
+    "ONDO",
+    144.91
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    193.84
+   ],
+   [
+    "XPL",
+    196.31
+   ],
+   [
+    "ENA",
+    145.44
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 354.5,
+  "graph_w": 382.5,
+  "plot_w": 354.5,
+  "plot_h": 204,
+  "pxu_x": 16.1136,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok-maxmark@1600": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 38.53,
+  "label_gap_worst_pair": [
+   "SIGNAL",
+   "RISK"
+  ],
+  "marker_gap_min": 25.67,
+  "marker_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 83.36,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    0.99
+   ],
+   [
+    "RISK",
+    2.86
+   ],
+   [
+    "RF ML",
+    2.86
+   ],
+   [
+    "SENT",
+    2.86
+   ],
+   [
+    "FLOW",
+    2.86
+   ],
+   [
+    "MACRO",
+    2.86
+   ],
+   [
+    "TECH",
+    56.08
+   ],
+   [
+    "EXEC",
+    56.08
+   ],
+   [
+    "YFI",
+    56.08
+   ],
+   [
+    "COIN",
+    56.08
+   ],
+   [
+    "BTC",
+    197.21
+   ],
+   [
+    "ETH",
+    147.54
+   ],
+   [
+    "SOL",
+    197.21
+   ],
+   [
+    "XRP",
+    147.54
+   ],
+   [
+    "BNB",
+    147.54
+   ],
+   [
+    "DOGE",
+    147.54
+   ],
+   [
+    "NEAR",
+    197.21
+   ],
+   [
+    "ONDO",
+    147.54
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    197.21
+   ],
+   [
+    "XPL",
+    197.21
+   ],
+   [
+    "ENA",
+    147.54
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 354.5,
+  "graph_w": 382.5,
+  "plot_w": 354.5,
+  "plot_h": 204,
+  "pxu_x": 16.1136,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "empty@1920": {
+  "endpoint_mismatch": [],
+  "node_count": 10,
+  "label_gap_min": 42.22,
+  "label_gap_worst_pair": [
+   "RISK",
+   "TECH"
+  ],
+  "marker_gap_min": 41.22,
+  "marker_gap_worst_pair": [
+   "RISK",
+   "TECH"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 8,
+  "edge_len_mean": 79.25,
+  "edge_len_max": 79.25,
+  "edges_over_150": 0,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [],
+  "edge_through_label": [],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    4.74
+   ],
+   [
+    "RISK",
+    6.61
+   ],
+   [
+    "RF ML",
+    6.61
+   ],
+   [
+    "SENT",
+    6.61
+   ],
+   [
+    "FLOW",
+    6.61
+   ],
+   [
+    "MACRO",
+    6.61
+   ],
+   [
+    "TECH",
+    59.83
+   ],
+   [
+    "EXEC",
+    59.83
+   ],
+   [
+    "YFI",
+    59.83
+   ],
+   [
+    "COIN",
+    59.83
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 434.5,
+  "graph_w": 462.5,
+  "plot_w": 434.5,
+  "plot_h": 204,
+  "pxu_x": 19.75,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok@1920": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 37.17,
+  "label_gap_worst_pair": [
+   "XRP",
+   "NEAR"
+  ],
+  "marker_gap_min": 26.87,
+  "marker_gap_worst_pair": [
+   "ETH",
+   "HYPE"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 89.17,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    2.11
+   ],
+   [
+    "RISK",
+    3.61
+   ],
+   [
+    "RF ML",
+    3.61
+   ],
+   [
+    "SENT",
+    3.61
+   ],
+   [
+    "FLOW",
+    3.99
+   ],
+   [
+    "MACRO",
+    3.61
+   ],
+   [
+    "TECH",
+    56.83
+   ],
+   [
+    "EXEC",
+    56.83
+   ],
+   [
+    "YFI",
+    57.21
+   ],
+   [
+    "COIN",
+    57.21
+   ],
+   [
+    "BTC",
+    196.46
+   ],
+   [
+    "ETH",
+    146.04
+   ],
+   [
+    "SOL",
+    194.96
+   ],
+   [
+    "XRP",
+    147.16
+   ],
+   [
+    "BNB",
+    144.54
+   ],
+   [
+    "DOGE",
+    146.41
+   ],
+   [
+    "NEAR",
+    195.34
+   ],
+   [
+    "ONDO",
+    144.91
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    193.84
+   ],
+   [
+    "XPL",
+    196.31
+   ],
+   [
+    "ENA",
+    145.44
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 434.5,
+  "graph_w": 462.5,
+  "plot_w": 434.5,
+  "plot_h": 204,
+  "pxu_x": 19.75,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok-maxmark@1920": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 38.67,
+  "label_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "marker_gap_min": 25.67,
+  "marker_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 89.17,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    0.99
+   ],
+   [
+    "RISK",
+    2.86
+   ],
+   [
+    "RF ML",
+    2.86
+   ],
+   [
+    "SENT",
+    2.86
+   ],
+   [
+    "FLOW",
+    2.86
+   ],
+   [
+    "MACRO",
+    2.86
+   ],
+   [
+    "TECH",
+    56.08
+   ],
+   [
+    "EXEC",
+    56.08
+   ],
+   [
+    "YFI",
+    56.08
+   ],
+   [
+    "COIN",
+    56.08
+   ],
+   [
+    "BTC",
+    197.21
+   ],
+   [
+    "ETH",
+    147.54
+   ],
+   [
+    "SOL",
+    197.21
+   ],
+   [
+    "XRP",
+    147.54
+   ],
+   [
+    "BNB",
+    147.54
+   ],
+   [
+    "DOGE",
+    147.54
+   ],
+   [
+    "NEAR",
+    197.21
+   ],
+   [
+    "ONDO",
+    147.54
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    197.21
+   ],
+   [
+    "XPL",
+    197.21
+   ],
+   [
+    "ENA",
+    147.54
+   ]
+  ],
+  "label_widest": 31.203125,
+  "plot_w_px": 434.5,
+  "graph_w": 462.5,
+  "plot_w": 434.5,
+  "plot_h": 204,
+  "pxu_x": 19.75,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "empty@2560": {
+  "endpoint_mismatch": [],
+  "node_count": 10,
+  "label_gap_min": 42.22,
+  "label_gap_worst_pair": [
+   "RISK",
+   "TECH"
+  ],
+  "marker_gap_min": 41.22,
+  "marker_gap_worst_pair": [
+   "RISK",
+   "TECH"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 8,
+  "edge_len_mean": 108.29,
+  "edge_len_max": 108.29,
+  "edges_over_150": 0,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [],
+  "edge_through_label": [],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    4.74
+   ],
+   [
+    "RISK",
+    6.61
+   ],
+   [
+    "RF ML",
+    6.61
+   ],
+   [
+    "SENT",
+    6.61
+   ],
+   [
+    "FLOW",
+    6.61
+   ],
+   [
+    "MACRO",
+    6.61
+   ],
+   [
+    "TECH",
+    59.83
+   ],
+   [
+    "EXEC",
+    59.83
+   ],
+   [
+    "YFI",
+    59.83
+   ],
+   [
+    "COIN",
+    59.83
+   ]
+  ],
+  "label_widest": 31.203128814697266,
+  "plot_w_px": 594.5,
+  "graph_w": 622.5,
+  "plot_w": 594.5,
+  "plot_h": 204,
+  "pxu_x": 27.0227,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok@2560": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 37.17,
+  "label_gap_worst_pair": [
+   "XRP",
+   "NEAR"
+  ],
+  "marker_gap_min": 26.87,
+  "marker_gap_worst_pair": [
+   "ETH",
+   "HYPE"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 100.79,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    2.11
+   ],
+   [
+    "RISK",
+    3.61
+   ],
+   [
+    "RF ML",
+    3.61
+   ],
+   [
+    "SENT",
+    3.61
+   ],
+   [
+    "FLOW",
+    3.99
+   ],
+   [
+    "MACRO",
+    3.61
+   ],
+   [
+    "TECH",
+    56.83
+   ],
+   [
+    "EXEC",
+    56.83
+   ],
+   [
+    "YFI",
+    57.21
+   ],
+   [
+    "COIN",
+    57.21
+   ],
+   [
+    "BTC",
+    196.46
+   ],
+   [
+    "ETH",
+    146.04
+   ],
+   [
+    "SOL",
+    194.96
+   ],
+   [
+    "XRP",
+    147.16
+   ],
+   [
+    "BNB",
+    144.54
+   ],
+   [
+    "DOGE",
+    146.41
+   ],
+   [
+    "NEAR",
+    195.34
+   ],
+   [
+    "ONDO",
+    144.91
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    193.84
+   ],
+   [
+    "XPL",
+    196.31
+   ],
+   [
+    "ENA",
+    145.44
+   ]
+  ],
+  "label_widest": 31.203128814697266,
+  "plot_w_px": 594.5,
+  "graph_w": 622.5,
+  "plot_w": 594.5,
+  "plot_h": 204,
+  "pxu_x": 27.0227,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ },
+ "12tok-maxmark@2560": {
+  "endpoint_mismatch": [],
+  "node_count": 22,
+  "label_gap_min": 38.67,
+  "label_gap_worst_pair": [
+   "BTC",
+   "BNB"
+  ],
+  "marker_gap_min": 25.67,
+  "marker_gap_worst_pair": [
+   "DOGE",
+   "XPL"
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edge_count": 20,
+  "edge_len_mean": 100.79,
+  "edge_len_max": 156.1,
+  "edges_over_150": 2,
+  "edges_over_200": 0,
+  "edge_crossings": 0,
+  "crossing_pairs": [],
+  "edge_through_node": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "edge_through_label": [
+   "EXEC>BTC hits BNB",
+   "YFI>SOL hits ONDO",
+   "TECH>NEAR hits XRP",
+   "COIN>HYPE hits ETH",
+   "MACRO>ZEC hits ENA",
+   "SIGNAL>XPL hits DOGE"
+  ],
+  "label_clipped": [
+   [
+    "SIGNAL",
+    0.99
+   ],
+   [
+    "RISK",
+    2.86
+   ],
+   [
+    "RF ML",
+    2.86
+   ],
+   [
+    "SENT",
+    2.86
+   ],
+   [
+    "FLOW",
+    2.86
+   ],
+   [
+    "MACRO",
+    2.86
+   ],
+   [
+    "TECH",
+    56.08
+   ],
+   [
+    "EXEC",
+    56.08
+   ],
+   [
+    "YFI",
+    56.08
+   ],
+   [
+    "COIN",
+    56.08
+   ],
+   [
+    "BTC",
+    197.21
+   ],
+   [
+    "ETH",
+    147.54
+   ],
+   [
+    "SOL",
+    197.21
+   ],
+   [
+    "XRP",
+    147.54
+   ],
+   [
+    "BNB",
+    147.54
+   ],
+   [
+    "DOGE",
+    147.54
+   ],
+   [
+    "NEAR",
+    197.21
+   ],
+   [
+    "ONDO",
+    147.54
+   ],
+   [
+    "HYPE",
+    197.21
+   ],
+   [
+    "ZEC",
+    197.21
+   ],
+   [
+    "XPL",
+    197.21
+   ],
+   [
+    "ENA",
+    147.54
+   ]
+  ],
+  "label_widest": 31.203128814697266,
+  "plot_w_px": 594.5,
+  "graph_w": 622.5,
+  "plot_w": 594.5,
+  "plot_h": 204,
+  "pxu_x": 27.0227,
+  "pxu_y": 17.7391,
+  "font": "10px",
+  "family": "\"Share Tech Mono\", ui-monospace, \"Courier New\", monospace"
+ }
+}

@@ -1,0 +1,214 @@
+# ============================================================
+# Konfigurasi Sistem AI Trading Agent — Paper Trading
+# ============================================================
+
+# --- Akun Virtual ---
+account:
+  initial_balance: 10000.0  # USDT
+  currency: "USDT"
+
+# --- Simbol yang Diperdagangkan (Top 10 Volume Futures) ---
+symbols:
+  - "BTC/USDT:USDT"
+  - "ETH/USDT:USDT"
+  - "SOL/USDT:USDT"
+  - "XRP/USDT:USDT"
+  - "BNB/USDT:USDT"
+  - "DOGE/USDT:USDT"
+  - "ADA/USDT:USDT"
+  - "AVAX/USDT:USDT"
+  - "LINK/USDT:USDT"
+  - "NEAR/USDT:USDT"
+
+# --- Pemindaian Dinamis Top Volume Futures ---
+scanning:
+  dynamic_top_volume: true      # Otomatis deteksi & update top volume saat startup & berkala
+  top_n: 10                     # Jumlah pasangan futures teratas
+  refresh_interval: 3600        # Refresh ranking volume tiap 1 jam (detik)
+
+# --- Pengaturan Bursa ---
+exchange:
+  name: "binance"
+  type: "future"
+  sandbox: true
+
+# --- Manajemen Risiko (Scalping Mode) ---
+risk:
+  max_risk_per_trade: 0.005      # 0.5% per trade (kecil tapi sering)
+  max_leverage: 50
+  max_daily_loss: 0.10           # 10% saldo (volume tinggi)
+  max_drawdown: 0.20             # 20% dari puncak
+  max_open_positions: 30         # Banyak posisi simultan
+  default_leverage: 10
+
+# --- Biaya Simulasi ---
+#
+# PENTING: angka di bawah adalah tarif Hyperliquid BASE TIER, bukan
+# Binance. Bot ini mengirim ke Hyperliquid, dan memakai tarif bursa
+# yang salah membuat seluruh perhitungan ekonomi meleset.
+#
+# Sumber: hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+# Tier base (14d volume = 0):
+#   taker 0.045%   maker 0.015%
+# Fee turun per tier: Platinum 0.028%, Gold 0.024%, Silver 0.020%.
+#
+# Kalau bot ini mengejar volume besar, perbarui angka ini ke tier yang
+# sebenarnya dipakai. Tingkat taker yang terlalu rendah membuat bot terlihat
+# untung padahal tidak.
+fees:
+  maker: 0.00015   # 0.015%  Hyperliquid base tier
+  taker: 0.00045   # 0.045%  Hyperliquid base tier
+
+# --- Interval Agen (detik) — Scalping Mode ---
+agent_intervals:
+  news_agent: 300           # 5 menit (berita tetap lambat)
+  news_agent_us_open: 120   # 2 menit saat pasar AS buka
+  analysis_agent: 15        # 15 detik (indikator cepat)
+  analysis_agent_us_open: 10   # 10 detik
+  decision_agent: 3         # 3 detik (scalping agresif)
+  decision_agent_us_open: 2    # 2 detik
+  finbert_batch: 900        # 15 menit
+  macro_data: 21600         # 6 jam
+  funding_rate: 28800       # 8 jam
+  balance_snapshot: 60      # 1 menit (lebih sering karena banyak trade)
+
+# --- Jam Pasar AS (Eastern Time) ---
+us_market:
+  timezone: "US/Eastern"
+  open_hour: 9
+  open_minute: 30
+  close_hour: 16
+
+# --- Indikator Teknikal ---
+indicators:
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bollinger_period: 20
+  bollinger_std: 2
+  ema_short: 9
+  ema_long: 21
+
+# --- Sumber Berita ---
+news_sources:
+  rss:
+    - "https://www.coindesk.com/arc/outboundfeeds/rss/"
+    - "https://cointelegraph.com/rss"
+  cryptopanic:
+    base_url: "https://cryptopanic.com/api/free/v1/posts/"
+    # token: ""  # Isi jika punya token gratis
+
+# --- Database ---
+database:
+  path: "data_store/trading_bot.db"
+  # Tabel direction_snapshots tumbuh 5 dtk x 10 simbol = 172.800 baris/hari
+  # bila tidak dipangkas. Job `direction_snapshot_prune` di run.py memanggil
+  # prune tiap `snapshot_prune_interval` detik, menyisakan N terbaru per simbol.
+  snapshot_prune_interval: 3600   # 1 jam
+  snapshot_keep_per_symbol: 120   # ~10 menit riwayat (interval ensemble 5 dtk)
+
+  # `agent_logs` ditulis pada SETIAP siklus decision (loop 0.3 dtk), termasuk
+  # saat tidak terjadi apa-apa ("Tidak ada order baru"). Tanpa prune itu
+  # ~214 baris/menit = ~309.000 baris/hari, dan tidak ada DELETE yang
+  # menyentuhnya. Job `agent_log_prune` di run.py memangkas tiap 30 menit.
+  agent_log_prune_interval: 1800
+  agent_log_keep: 5000             # ~20 menit jejak decision terakhir
+
+# --- Dashboard ---
+dashboard:
+  host: "127.0.0.1"
+  port: 8050
+  debug: false
+  update_interval: 2000  # ms
+
+# --- Logging ---
+logging:
+  level: "INFO"
+  file: "data_store/logs/trading_bot.log"
+  max_bytes: 10485760  # 10 MB
+  backup_count: 5
+
+# --- Mode Scalping (Optimasi Profitabilitas) ---
+scalping:
+  enabled: true
+  min_profit_pct: 0.0060       # 0.60% min profit (harus > breakeven_trigger_pct)
+  max_hold_seconds: 300        # 5 menit max hold untuk membiarkan posisi berkembang
+  min_hold_seconds: 15         # Min 15 detik untuk menghindari whipsaw spread
+  batch_size: 2                # 2 posisi berkualitas per siklus (bukan spam)
+  fast_tp_pct: 0.0060          # 0.60% take profit (+0.50% net setelah fee)
+  tight_sl_pct: 0.0025         # 0.25% stop loss (-0.35% net setelah fee)
+  min_confidence: 0.40         # Min 40% confidence (filter sinyal sampah)
+  # Ambang MEMBALIKKAN posisi yang sedang berjalan. Sengaja > min_confidence:
+  # membuka pada sinyal lemah wajar, membalik posisi aktif butuh bukti lebih
+  # kuat (dua fee + risiko whipsaw). Divalidasi saat boot: harus >= min_confidence
+  # dan < 1.0, kalau tidak gate-nya mati atau membalikkan posisi yang lemah.
+  reversal_close_threshold: 0.70
+  # Guard kualitas tick. Stop hanya 0.25% dari harga, jadi fill di puncak lokal
+  # berarti stop sudah berada di dalam spread. `PaperTradingEngine` menolak fill
+  # yang usianya > max_tick_age_seconds atau menyimpang > tight_sl_pct dari median
+  # `stale_tick_min_samples` tick terakhir dalam `stale_tick_window_seconds`.
+  # Jendela WAJIB > max_tick_age_seconds (divalidasi saat boot), dan jumlah sampel
+  # minimal 2 — median dari satu sampel bukan median.
+  max_tick_age_seconds: 1.5        # tick lebih tua dari ini ditolak
+  stale_tick_window_seconds: 3.0   # jendela median
+  stale_tick_min_samples: 5        # minimal 5 tick untuk median yang bermakna
+  orderbook_imbalance_threshold: 0.60  # 60% orderbook imbalance nyata
+  momentum_threshold: 0.0008   # 0.08% momentum 30s nyata
+  max_spread_pct: 0.0006       # Max 0.06% spread (likuiditas tinggi saja)
+  breakeven_trigger_pct: 0.0020  # 0.20% profit -> geser SL ke breakeven
+  breakeven_offset_pct: 0.0015    # 0.15% di atas/bawah entry (tutup fee roundtrip 0.10%)
+  cooldown_after_close_seconds: 20.0  # Cooldown simbol setelah profit
+  cooldown_after_loss_seconds: 90.0    # Cooldown dasar setelah SL (dikali streak)
+
+# --- Target Dinamis Berbasis Volatilitas (ATR) ---
+# SL/TP statis berarti sesuatu yang sangat berbeda tergantung kondisi pasar.
+# Di pasar tenang SL 0.25% adalah ruang gerak wajar; di pasar bergejolak itu
+# jarak yang lebih kecil dari noise, dan posisi akan tersapu di stop — bukan
+# karena arah salah, tapi karena satu tick normal.
+#
+#   SL_pct = clamp(atr_multiple x ATR_1m, min_sl_pct, max_sl_pct)
+#   TP_pct = max(SL_pct x min_risk_reward, scalping.min_profit_pct)
+#
+# `min_risk_reward` adalah penguncian: TP TIDAK BOLEH jatuh di bawah
+# SL x nilai ini, apa pun yang terjadi pada volatilitas.
+# `max_breakeven_win_rate` adalah circuit breaker runtime: kalau setelah fee
+# R:R-nya menuntut win rate lebih tinggi dari nilai ini, order dibatalkan.
+dynamic_tp_sl:
+  enabled: true
+  atr_multiple: 1.5           # Beri ruang 1.5x range rata-rata menit
+  atr_period: 14              # Wilder smoothing, sama seperti pandas-ta atr
+  min_sl_pct: 0.0025          # 0.25% — pagar bawah, sama dengan SL statis
+  max_sl_pct: 0.0150          # 1.50% — pagar atas keras
+  min_risk_reward: 1.5        # TP >= 1.5 x SL, selalu
+  realized_window_seconds: 30.0
+  max_breakeven_win_rate: 0.65  # Di atas ini, volatilitas terlalu tinggi
+
+# --- Ensemble arah LONG/SHORT (multi-agent probability scanner) ---
+# Menggabungkan verdict 4 agen spesialis jadi satu probabilitas arah.
+# Pakai log-odds pooling + agreement weighting, bukan rata-rata biasa.
+ensemble:
+  enabled: true
+  interval_seconds: 5           # Tulis snapshot ensemble tiap 5 detik
+  shrinkage_delta: 0.85         # < 1.0 menarik probabilitas ke 0.5 (anti over-confidence)
+  agreement_bonus: 0.5          # 0 = bobot rata, 1 = diskriminasi kuat
+  min_prob: 0.02                # Clamp probability [2%..98%]
+  max_snapshot_age_seconds: 20  # Snapshot lebih tua dari ini DITOLAK oleh DecisionAgent
+  diffusion_horizon_minutes: 30
+  diffusion_points: 60
+  momentum_window_seconds: 30.0
+  min_trades_for_microstructure: 8   # Minimal trade di tape agar Mikrostruktur bicara
+  min_returns_for_vol: 20            # Minimal return 1m agar sigma layak
+  agents:
+    orderflow:
+      enabled: true
+      weight: 0.30
+    momentum:
+      enabled: true
+      weight: 0.25
+    technical:
+      enabled: true
+      weight: 0.25
+    microstructure:
+      enabled: true
+      weight: 0.20

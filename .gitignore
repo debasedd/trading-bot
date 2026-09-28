@@ -1,0 +1,110 @@
+# ============================================================
+# Artefak runtime — jangan pernah di-commit.
+# ============================================================
+
+# Log hasil redirect stdout saat menjalankan bot. Logger resmi sudah menulis
+# ke data_store/logs/trading_bot.log (lihat config.yaml -> logging.file),
+# jadi file `_*.log` di root murni hasil pengalihan dan tidak pernah dibaca
+# kode mana pun.
+_*.log
+*.log
+
+# Snapshot proses & Misc
+*.pid
+*.bak
+*.tmp
+nohup.out
+
+# Database — hanya strukturnya yang boleh di-commit, bukan isinya.
+# File data_store/*.db selalu diabaikan karena berisi riwayat trade lokal.
+data_store/*.db
+data_store/*.db-wal
+data_store/*.db-shm
+data_store/*.sqlite
+data_store/*.sqlite3
+
+# Log runtime
+data_store/logs/
+
+# Artefak pengujian. Test suite memakai path DB sendiri supaya tidak
+# menyentuh DB produksi; file-file ini hanya sisa.
+data_store/test_*.db
+data_store/test_*.db-wal
+data_store/test_*.db-shm
+
+# Catatan kerja & probe pengukuran browser (lihat PROJECT_CONTEXT.md §11.2).
+# Semua ini alat bantu development, bukan bagian produk.
+data_store/_*.md
+data_store/_*.html
+data_store/_*.json
+data_store/_*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+
+# Ekstensi native hasil build modul mikrostruktur, BESERTA runtime MinGW-nya.
+# `CMakeLists.txt` menaruh output di ROOT project (bukan di build/) supaya
+# `import cpp_microstructure` langsung berhasil tanpa PYTHONPATH tambahan —
+# konsekuensinya file `.pyd` hasil KOMPILASI lokal juga muncul di root, dan
+# tidak boleh ikut ter-commit.
+*.pyd
+*.dylib
+/cpp_microstructure.lib
+
+# Runtime MinGW yang harus ikut modul agar bisa di-load tanpa MSYS terpasang.
+# `libstdc++` dan `libgcc` sudah ditaut statis (lihat CMakeLists), tapi
+# `libwinpthread-1.dll` tidak bisa — ia ikut tertarik dari dalam `libstdc++.a`
+# dan sekarang juga membutuhkan `api-ms-win-crt-private-l1-1-0.dll` yang hanya
+# ada di `C:\Windows\System32\downlevel\`. Dua file ini karena itu harus DISALIN
+# ke folder yang sama dengan `.pyd`, bukan dicari lewat PATH.
+libwinpthread-1.dll
+api-ms-win-crt-private-l1-1-0.dll
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Kredensial. Repo ini dirancang $0-tanpa-API-key, tapi `cryptoPanic.token`
+# dan `fred.api_key` memang ada di config.yaml — kalau suatu saat diisi,
+# file itu tidak boleh masuk repo.
+.env
+.env.*
+secrets.yaml
+local.yaml
+config.local.yaml
+
+# Backup database hasil reset — 75 MB+ binary state yang tidak pernah
+# perlu di-version. Hanya strukturnya (SCHEMA di database/db.py) yang
+#_versionable; isinya mutable trade history milik satu mesin saja.
+data_store/backups/
+data_store/*.db.backup-*
+data_store/*.bak
+*.backup-*

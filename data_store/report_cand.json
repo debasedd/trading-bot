@@ -1,0 +1,780 @@
+{
+  "width": 462.5,
+  "height": 230,
+  "results": {
+    "all12": {
+      "node_count": 22,
+      "labels": [
+        "BNB",
+        "BTC",
+        "COIN",
+        "DOGE",
+        "ENA",
+        "ETH",
+        "EXEC",
+        "FLOW",
+        "HYPE",
+        "MACRO",
+        "NEAR",
+        "ONDO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "SOL",
+        "TECH",
+        "XPL",
+        "XRP",
+        "YFI",
+        "ZEC"
+      ],
+      "edge_count": 21,
+      "edge_len_mean": 118.55,
+      "edge_len_max": 256.15,
+      "edges_over_150": 6,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 8.61,
+      "worst_label_pair": [
+        "NEAR",
+        "HYPE"
+      ],
+      "worst_marker_gap": 9.61,
+      "worst_marker_pair": [
+        "HYPE",
+        "ZEC"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ],
+        [
+          "EXEC",
+          "BTC",
+          256.1
+        ],
+        [
+          "EXEC",
+          "ETH",
+          224.2
+        ],
+        [
+          "EXEC",
+          "SOL",
+          192.3
+        ],
+        [
+          "EXEC",
+          "XRP",
+          157.7
+        ],
+        [
+          "EXEC",
+          "BNB",
+          124.6
+        ],
+        [
+          "EXEC",
+          "DOGE",
+          94.6
+        ],
+        [
+          "EXEC",
+          "NEAR",
+          71.5
+        ],
+        [
+          "EXEC",
+          "HYPE",
+          62.1
+        ],
+        [
+          "EXEC",
+          "ZEC",
+          70.5
+        ],
+        [
+          "EXEC",
+          "ONDO",
+          93.0
+        ],
+        [
+          "EXEC",
+          "ENA",
+          122.8
+        ],
+        [
+          "EXEC",
+          "XPL",
+          155.7
+        ]
+      ]
+    },
+    "first6": {
+      "node_count": 16,
+      "labels": [
+        "BNB",
+        "BTC",
+        "COIN",
+        "DOGE",
+        "ETH",
+        "EXEC",
+        "FLOW",
+        "MACRO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "SOL",
+        "TECH",
+        "XRP",
+        "YFI"
+      ],
+      "edge_count": 15,
+      "edge_len_mean": 127.61,
+      "edge_len_max": 256.15,
+      "edges_over_150": 5,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 12.59,
+      "worst_label_pair": [
+        "BNB",
+        "DOGE"
+      ],
+      "worst_marker_gap": 9.61,
+      "worst_marker_pair": [
+        "BTC",
+        "ETH"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ],
+        [
+          "EXEC",
+          "BTC",
+          256.1
+        ],
+        [
+          "EXEC",
+          "ETH",
+          224.2
+        ],
+        [
+          "EXEC",
+          "SOL",
+          192.3
+        ],
+        [
+          "EXEC",
+          "XRP",
+          157.7
+        ],
+        [
+          "EXEC",
+          "BNB",
+          124.6
+        ],
+        [
+          "EXEC",
+          "DOGE",
+          94.6
+        ]
+      ]
+    },
+    "last6": {
+      "node_count": 16,
+      "labels": [
+        "COIN",
+        "ENA",
+        "EXEC",
+        "FLOW",
+        "HYPE",
+        "MACRO",
+        "NEAR",
+        "ONDO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "TECH",
+        "XPL",
+        "YFI",
+        "ZEC"
+      ],
+      "edge_count": 15,
+      "edge_len_mean": 96.0,
+      "edge_len_max": 177.62,
+      "edges_over_150": 2,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 8.61,
+      "worst_label_pair": [
+        "NEAR",
+        "HYPE"
+      ],
+      "worst_marker_gap": 9.61,
+      "worst_marker_pair": [
+        "HYPE",
+        "ZEC"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ],
+        [
+          "EXEC",
+          "NEAR",
+          71.5
+        ],
+        [
+          "EXEC",
+          "HYPE",
+          62.1
+        ],
+        [
+          "EXEC",
+          "ZEC",
+          70.5
+        ],
+        [
+          "EXEC",
+          "ONDO",
+          93.0
+        ],
+        [
+          "EXEC",
+          "ENA",
+          122.8
+        ],
+        [
+          "EXEC",
+          "XPL",
+          155.7
+        ]
+      ]
+    },
+    "one": {
+      "node_count": 11,
+      "labels": [
+        "BTC",
+        "COIN",
+        "EXEC",
+        "FLOW",
+        "MACRO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "TECH",
+        "YFI"
+      ],
+      "edge_count": 10,
+      "edge_len_mean": 112.07,
+      "edge_len_max": 256.15,
+      "edges_over_150": 2,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 29.8,
+      "worst_label_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "worst_marker_gap": 22.8,
+      "worst_marker_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ],
+        [
+          "EXEC",
+          "BTC",
+          256.1
+        ]
+      ]
+    },
+    "wide4": {
+      "node_count": 14,
+      "labels": [
+        "BTC",
+        "COIN",
+        "EXEC",
+        "FLOW",
+        "MACRO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "TECH",
+        "XPL",
+        "XRP",
+        "YFI",
+        "ZEC"
+      ],
+      "edge_count": 13,
+      "edge_len_mean": 115.74,
+      "edge_len_max": 256.15,
+      "edges_over_150": 4,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 29.8,
+      "worst_label_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "worst_marker_gap": 22.8,
+      "worst_marker_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ],
+        [
+          "EXEC",
+          "BTC",
+          256.1
+        ],
+        [
+          "EXEC",
+          "XRP",
+          157.7
+        ],
+        [
+          "EXEC",
+          "ZEC",
+          70.5
+        ],
+        [
+          "EXEC",
+          "XPL",
+          155.7
+        ]
+      ]
+    },
+    "empty": {
+      "node_count": 10,
+      "labels": [
+        "COIN",
+        "EXEC",
+        "FLOW",
+        "MACRO",
+        "RF ML",
+        "RISK",
+        "SENT",
+        "SIGNAL",
+        "TECH",
+        "YFI"
+      ],
+      "edge_count": 9,
+      "edge_len_mean": 96.06,
+      "edge_len_max": 177.62,
+      "edges_over_150": 1,
+      "crossings": 0,
+      "crossing_detail": [],
+      "thru_node": [],
+      "thru_label": [],
+      "label_violations": [],
+      "marker_violations": [],
+      "worst_label_gap": 29.8,
+      "worst_label_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "worst_marker_gap": 22.8,
+      "worst_marker_pair": [
+        "RISK",
+        "EXEC"
+      ],
+      "graph_px": [
+        462.5,
+        230
+      ],
+      "plot_area_px": [
+        434.5,
+        204
+      ],
+      "ranges": [
+        [
+          0,
+          22
+        ],
+        [
+          0,
+          11.5
+        ]
+      ],
+      "edges": [
+        [
+          "SIGNAL",
+          "TECH",
+          83.8
+        ],
+        [
+          "FLOW",
+          "TECH",
+          49.7
+        ],
+        [
+          "YFI",
+          "TECH",
+          83.8
+        ],
+        [
+          "COIN",
+          "TECH",
+          143.7
+        ],
+        [
+          "MACRO",
+          "RF ML",
+          114.5
+        ],
+        [
+          "SENT",
+          "RF ML",
+          177.6
+        ],
+        [
+          "TECH",
+          "RF ML",
+          99.1
+        ],
+        [
+          "RF ML",
+          "RISK",
+          71.4
+        ],
+        [
+          "RISK",
+          "EXEC",
+          40.8
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,37 @@
+======================================================================
+1. SNAPSHOT SALDO (dihasilkan balance_snapshot job + HUD)
+======================================================================
+  2026-09-25 12:28:41  balance= 10,000.90 upnl=    2.36 equity= 10,003.26
+  2026-09-25 12:27:41  balance= 10,001.02 upnl=    0.57 equity= 10,001.59
+  2026-09-25 12:26:41  balance= 10,002.26 upnl=   -0.76 equity= 10,001.50
+  2026-09-25 12:25:41  balance= 10,002.65 upnl=    0.28 equity= 10,002.93
+  2026-09-25 12:24:24  balance= 10,003.10 upnl=    0.98 equity= 10,004.08
+
+  snapshot terbaru: 18 detik lalu
+
+======================================================================
+2. KONSISTENSI ANGKA HUD vs DATABASE
+======================================================================
+  HUD wallet  :    10,002.56
+  snap wallet :    10,000.90   selisih +1.66
+  HUD equity  :    10,003.79
+  snap equity :    10,003.26   selisih +0.53
+  HUD upnl    :         1.23
+  snap upnl   :         2.36   selisih -1.13
+
+======================================================================
+3. SINYAL & BERITA (diisi agent + callback scanner)
+======================================================================
+  signals total        :    6,519  (1 jam terakhir: 2068)
+  news total           :      199
+  agent_logs total     :    1,915  (10 menit terakhir: 1915)
+  candles total        :   59,194  (1 jam terakhir: 730)
+
+======================================================================
+4. NEURAL NET (sumber data HUD paling prone bug)
+======================================================================
+  simbol ber-sinyal     : 10
+  node ter-render      : 22
+  koordinat duplikat   : 0
+
+>>> SEMUA SUMBER DATA HUD AKTIF DAN KONSISTEN

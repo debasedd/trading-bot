@@ -1,0 +1,89 @@
+﻿
+########## dashboard/app.py  (148 lines) ##########
+   22  CONST  logger = get_logger('dashboard')
+   25  FUNC   def create_dash_app() -> dash.Dash
+  100  FUNC   def _silence_flask_banner()
+  128  FUNC   def run_dashboard()
+
+########## dashboard/callbacks/update_callbacks.py  (1429 lines) ##########
+   44  CONST  logger = get_logger('dashboard.callbacks')
+   49  CONST  _neural_msg_prev: dict = {}
+   54  CONST  _neural_last_fig = None
+   57  FUNC   def _set_neural_last_fig(fig)
+   64  FUNC   def _get_sync_db()
+   72  FUNC   def derive_macro_bias(macro_rows) -> str
+  114  FUNC   def register_callbacks(app)
+
+########## dashboard/layouts/agent_logs.py  (69 lines) ##########
+    8  FUNC   def create_agent_logs_layout()
+   39  FUNC   def create_log_entries(logs)
+
+########## dashboard/layouts/hud.py  (440 lines) ##########
+   20  FUNC   def create_hud_layout() -> html.Div
+   62  FUNC   def create_top_bar() -> html.Div
+  100  FUNC   def create_ticker_tape() -> html.Div
+  112  FUNC   def create_wallet_pnl_panel() -> html.Div
+  158  FUNC   def create_mini_price_panel() -> html.Div
+  204  FUNC   def create_positions_panel() -> html.Div
+  230  FUNC   def create_scanner_panel() -> html.Div
+  280  CONST  TREE_STAGES = ['feed', 'scan', 'sense', 'gate', 'exec', 'outcome']
+  283  FUNC   def create_symbol_pnl_panel() -> html.Div
+  318  FUNC   def create_neural_net_panel() -> html.Div
+  347  FUNC   def create_equity_growth_panel() -> html.Div
+  372  FUNC   def create_trade_logs_panel() -> html.Div
+  391  FUNC   def create_live_analytics_panel() -> html.Div
+  435  FUNC   def create_footer_ticker() -> html.Div
+
+########## dashboard/layouts/hud_figures.py  (972 lines) ##########
+   21  FUNC   def _hex_to_rgb(color: str) -> tuple
+   27  FUNC   def with_alpha(color: str, alpha: float) -> str
+   51  CONST  PARCHMENT_BG = palette.PAPER_BG
+   52  CONST  PARCHMENT_CARD = palette.CARD_BG
+   53  CONST  INK_BLACK = palette.INK
+   54  CONST  INK_MUTED = palette.INK_MUTED
+   55  CONST  GREEN_VINTAGE = palette.GREEN
+   56  CONST  RED_VINTAGE = palette.RED
+   57  CONST  AMBER_VINTAGE = palette.AMBER
+   58  CONST  BLUE_VINTAGE = palette.BLUE
+   64  CONST  GREEN_VINTAGE_WASH = with_alpha(GREEN_VINTAGE, 0.22)
+   65  CONST  BLUE_VINTAGE_DIM = with_alpha(BLUE_VINTAGE, 0.5)
+   66  CONST  INK_FAINT = with_alpha(INK_BLACK, 0.13)
+   67  CONST  INK_TRANSPARENT = with_alpha(INK_BLACK, 0.0)
+   71  FUNC   def create_mini_candlestick_fig(df: pd.DataFrame, symbol: str) -> go.Figure
+  205  FUNC   def create_convergence_fig(diffusion_data: dict = None) -> go.Figure
+  307  CONST  NEURAL_SYSTEM_NODES = {'CORE_ENGINE': (1.0, 5.6, 'CORE', palette.INK, 'Central AI Ingest'), 'CATEGORY_FEED': (4.6, 11.1, 'FEED', palette.WARN, 'Market data ingestion'), 'CATEGORY_SENT': (4.6, 7.2, 'SENT', palette.WARN, 'News sentiment'), 'CATEGORY_ML': (4.6, 3.3, 'ML', palette.AMBER, 'Machine learning'), 'CATEGORY_RISK': (4.6, -0.6, 'RISK', palette.BLUE, 'Risk sizing gate'), 'BINANCE_FEED': (8.2, 12.6, 'FLOW', palette.WARN, 'Hyperliquid WS + L2 book'), 'SENTIMENT': (8.2, 8.7, 'SENT', palette.WARN, 'VADER + FinBERT'), 'RF_MODEL': (8.2, 4.8, 'RF ML', palette.AMBER, 'RandomForest (7-feat)'), 'DECISION_GATE': (8.2, 0.9, 'RISK', palette.BLUE, 'Risk sizing gate'), 'MACRO_FRED': (11.8, 12.6, 'MACRO', palette.INK_MUTED, 'CPI / Yield / FFR'), 'TECH_TA': (11.8, 8.7, 'TECH', palette.BLUE, 'pandas-ta (RSI/MACD/BB)'), 'EXECUTION_AGENT': (11.8, 4.8, 'EXEC', palette.GREEN, 'Paper engine exec'), 'YF_FALLBACK': (11.8, 0.9, 'YFI', palette.INK_MUTED, 'Tier 1 fallback')}
+  344  CONST  NEURAL_SYSTEM_EDGES = [('CORE_ENGINE', 'CATEGORY_FEED'), ('CORE_ENGINE', 'CATEGORY_SENT'), ('CORE_ENGINE', 'CATEGORY_ML'), ('CORE_ENGINE', 'CATEGORY_RISK'), ('CATEGORY_FEED', 'BINANCE_FEED'), ('CATEGORY_SENT', 'SENTIMENT'), ('CATEGORY_ML', 'RF_MODEL'), ('CATEGORY_RISK', 'DECISION_GATE'), ('BINANCE_FEED', 'MACRO_FRED'), ('SENTIMENT', 'TECH_TA'), ('RF_MODEL', 'EXECUTION_AGENT'), ('DECISION_GATE', 'YF_FALLBACK')]
+  385  CONST  TOKEN_SLOTS = [(18.5, 13.2), (18.5, 10.6), (18.5, 8.0), (18.5, 5.4), (18.5, 2.8), (18.5, 0.2), (22.0, 13.2), (22.0, 10.6), (22.0, 8.0), (22.0, 5.4), (22.0, 2.8), (22.0, 0.2)]
+  415  CONST  _TOKEN_UNIVERSE = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'DOGE', 'NEAR', 'HYPE', 'ZEC', 'ONDO', 'ENA', 'XPL', 'AVAX', 'LINK', 'ADA', 'ARB', 'SUI', 'TIA', 'APT', 'OP', 'INJ', 'SEI', 'PEPE', 'WIF', 'BONK']
+  429  CONST  _TOKEN_DISPLAY_PRIORITY = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'DOGE', 'NEAR', 'HYPE', 'ZEC', 'ONDO', 'ENA', 'XPL', 'AVAX', 'LINK', 'ADA', 'ARB', 'SUI', 'TIA', 'APT', 'OP', 'INJ', 'SEI', 'PEPE', 'WIF', 'BONK']
+  437  FUNC   def _fnv1a(text: str) -> int
+  451  FUNC   def _build_token_slot_registry() -> dict
+  493  CONST  _TOKEN_SLOT_REGISTRY: dict = _build_token_slot_registry()
+  497  CONST  NEURAL_NODE_LAYOUT = dict(NEURAL_SYSTEM_NODES)
+  498  CONST  TOKEN_NODE_KEYS = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'DOGE', 'NEAR']
+  499  CONST  TOKEN_ANCHORS = TOKEN_SLOTS
+  502  CONST  AGENT_NODE_METRIC = {'EXECUTION_AGENT': 'execution_agent', 'DECISION_GATE': 'decision_agent', 'RF_MODEL': 'analysis_agent', 'SENTIMENT': 'news_agent', 'TECH_TA': 'analysis_agent', 'MACRO_FRED': 'analysis_agent'}
+  512  CONST  FEED_NODE_CHANNEL = {'BINANCE_FEED': 'allMids', 'CORE_ENGINE': 'l2Book', 'YF_FALLBACK': 'candle', 'COINGECKO': 'trades'}
+  520  FUNC   def create_neural_net_fig(signal_map: dict = None, activity_map: dict = None,
+  859  FUNC   def create_equity_area_fig(balance_history: list, initial_balance: float = 10000.0) -> go.Figure
+  931  FUNC   def create_mini_sparkline_fig(data_series: list, line_color: str = GREEN_VINTAGE) -> go.Figure
+
+########## dashboard/layouts/news_feed.py  (117 lines) ##########
+    8  FUNC   def create_news_feed_layout()
+   27  FUNC   def create_sentiment_summary(aggregate)
+   79  FUNC   def create_news_items(news_list)
+
+########## dashboard/layouts/performance.py  (160 lines) ##########
+   11  FUNC   def create_performance_layout()
+   33  FUNC   def create_performance_stats(account_summary)
+   70  FUNC   def create_equity_chart(balance_history)
+  117  FUNC   def create_drawdown_chart(balance_history)
+
+########## dashboard/layouts/positions.py  (95 lines) ##########
+    8  FUNC   def create_positions_layout()
+   27  FUNC   def create_positions_table(positions)
+   69  FUNC   def create_trade_history_table(trades)
+
+########## dashboard/layouts/price_chart.py  (209 lines) ##########
+   13  FUNC   def create_price_chart_layout()
+   72  FUNC   def create_candlestick_figure(df, symbol="BTC/USDT", trades=None)

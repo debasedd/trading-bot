@@ -1,0 +1,211 @@
+﻿python : <unknown>:16: SyntaxWarning: "\" is an invalid escape sequence. Such sequences will not work in the future. 
+Did you mean "\\"? A raw string is also an option.
+At line:1 char:349
++ ... ch {} } }; cd C:\Users\maman\Desktop\Project\trading-bot; python -c "
++                                                               ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (<unknown>:16: S...also an option.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+MODULE-LEVEL EDGES 155  DEFERRED 36  TOTAL 191
+
+--- FAN-IN (module-level, first-party) ---
+  34  core.logger
+  24  core.config
+  10  core.market_store
+   9  core.event_bus
+   9  database.models
+   5  agents.base_agent
+   5  database.db
+   5  trading.models
+   4  database.repository
+   4  trading.risk_manager
+   3  data.sentiment
+   3  analysis.technical
+   3  dashboard.layouts
+   2  data.price_feed
+   2  data.macro_fetcher
+   2  analysis.ml_signals
+   2  core.scheduler
+   2  core.utils
+   2  core
+   2  dashboard.layouts.hud_figures
+   1  analysis.fundamental
+   1  analysis.direction_ensemble
+   1  data.news_fetcher
+   1  dashboard.layouts.hud
+   1  dashboard.callbacks.update_callbacks
+   1  analysis.probability_engine
+   1  dashboard.layouts.positions
+   1  dashboard.layouts.agent_logs
+   1  dashboard.layouts.news_feed
+   1  dashboard.layouts.performance
+   1  dashboard.layouts.price_chart
+   1  data.hyperliquid_feed
+   1  trading.position_manager
+   1  trading.live.client
+   1  trading.live.safety
+   1  trading.live.engine
+   1  trading.paper_engine
+   1  agents.news_agent
+   1  agents.analysis_agent
+   1  agents.decision_agent
+   1  agents.execution_agent
+   1  agents.direction_agents
+   1  dashboard.app
+
+--- EDGES (source -> target @line) ---
+agents.analysis_agent -> agents.base_agent  @12 
+agents.analysis_agent -> analysis.fundamental  @18 
+agents.analysis_agent -> analysis.ml_signals  @19 
+agents.analysis_agent -> analysis.technical  @17 
+agents.analysis_agent -> core.config  @21 
+agents.analysis_agent -> core.event_bus  @13 
+agents.analysis_agent -> core.logger  @22 
+agents.analysis_agent -> data.macro_fetcher  @15 
+agents.analysis_agent -> data.price_feed  @14 
+agents.analysis_agent -> data.sentiment  @16 
+agents.analysis_agent -> database.models  @20 
+agents.base_agent -> core.event_bus  @13 
+agents.base_agent -> core.logger  @14 
+agents.base_agent -> database.db  @15 
+agents.base_agent -> database.models  @17 
+agents.base_agent -> database.repository  @16 
+agents.decision_agent -> agents.base_agent  @12 
+agents.decision_agent -> core.config  @14 
+agents.decision_agent -> core.event_bus  @13 
+agents.decision_agent -> core.logger  @20 
+agents.decision_agent -> core.market_store  @16 
+agents.decision_agent -> core.scheduler  @15 
+agents.decision_agent -> core.utils  @21 
+agents.decision_agent -> database.models  @19 
+agents.decision_agent -> trading.models  @17 
+agents.decision_agent -> trading.risk_manager  @18 
+agents.direction_agents -> agents.base_agent  @28 
+agents.direction_agents -> analysis.direction_ensemble  @29 
+agents.direction_agents -> analysis.technical  @37 
+agents.direction_agents -> core.config  @38 
+agents.direction_agents -> core.market_store  @39 
+agents.execution_agent -> agents.base_agent  @14 
+agents.execution_agent -> core.config  @16 
+agents.execution_agent -> core.event_bus  @15 
+agents.execution_agent -> core.logger  @18 
+agents.execution_agent -> core.market_store  @17 
+agents.execution_agent -> core.utils  @19 
+agents.execution_agent -> trading.models  @20 
+agents.execution_agent -> trading.risk_manager  @21 
+agents.news_agent -> agents.base_agent  @11 
+agents.news_agent -> core.event_bus  @12 
+agents.news_agent -> core.logger  @16 
+agents.news_agent -> data.news_fetcher  @13 
+agents.news_agent -> data.sentiment  @14 
+agents.news_agent -> database.models  @15 
+analysis.backtester -> core.config  @36 
+analysis.backtester -> core.logger  @37 
+analysis.fundamental -> core.logger  @7 
+analysis.ml_signals -> core.config  @15 
+analysis.ml_signals -> core.logger  @16 
+analysis.probability_engine -> core  @32 
+analysis.technical -> core.config  @11 
+analysis.technical -> core.logger  @12 
+analysis.vol_target -> core.config  @28 
+analysis.vol_target -> core.logger  @29 
+analysis.vol_target -> core.market_store  @30 
+analysis.volatility -> core.config  @25 
+analysis.volatility -> core.logger  @26 
+analysis.volatility -> core.market_store  @27 
+core.event_bus -> core.logger  @12 
+core.logger -> core.config  @11 
+core.microstructure -> core.logger  @52 
+core.scheduler -> core.config  @13 
+core.scheduler -> core.logger  @14 
+dashboard.app -> core.config  @17 
+dashboard.app -> core.logger  @18 
+dashboard.app -> dashboard.callbacks.update_callbacks  @20 
+dashboard.app -> dashboard.layouts.hud  @19 
+dashboard.callbacks.update_callbacks -> analysis.probability_engine  @20 
+dashboard.callbacks.update_callbacks -> analysis.technical  @26 
+dashboard.callbacks.update_callbacks -> core.config  @17 
+dashboard.callbacks.update_callbacks -> core.logger  @18 
+dashboard.callbacks.update_callbacks -> core.market_store  @19 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.agent_logs  @37 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.hud_figures  @27 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.news_feed  @38 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.performance  @39 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.positions  @36 
+dashboard.callbacks.update_callbacks -> dashboard.layouts.price_chart  @42 
+dashboard.layouts.hud -> dashboard.layouts.hud_figures  @9 
+dashboard.layouts.hud_figures -> dashboard.layouts  @19 
+dashboard.layouts.performance -> dashboard.layouts  @8 
+dashboard.layouts.price_chart -> core.config  @9 
+dashboard.layouts.price_chart -> dashboard.layouts  @10 
+data.hyperliquid_feed -> core  @42 
+data.hyperliquid_feed -> core.logger  @40 
+data.hyperliquid_feed -> core.market_store  @41 
+data.macro_fetcher -> core.config  @14 
+data.macro_fetcher -> core.logger  @15 
+data.macro_fetcher -> database.models  @16 
+data.news_fetcher -> core.config  @13 
+data.news_fetcher -> core.logger  @14 
+data.news_fetcher -> database.models  @15 
+data.price_feed -> core.config  @24 
+data.price_feed -> core.event_bus  @25 
+data.price_feed -> core.logger  @26 
+data.price_feed -> data.hyperliquid_feed  @27 
+data.sentiment -> core.logger  @11 
+database.db -> core.config  @7 
+database.db -> core.logger  @8 
+database.repository -> core.logger  @12 
+database.repository -> database.db  @7 
+database.repository -> database.models  @8 
+ml.predictor -> analysis.ml_signals  @11 
+ml.predictor -> core.logger  @12 
+ml.trainer -> core.logger  @14 
+run -> agents.analysis_agent  @59 
+run -> agents.decision_agent  @60 
+run -> agents.direction_agents  @62 
+run -> agents.execution_agent  @61 
+run -> agents.news_agent  @58 
+run -> core.config  @41 
+run -> core.event_bus  @50 
+run -> core.logger  @42 
+run -> core.scheduler  @51 
+run -> dashboard.app  @63 
+run -> data.macro_fetcher  @55 
+run -> data.price_feed  @54 
+run -> data.sentiment  @56 
+run -> database.db  @52 
+run -> database.repository  @53 
+run -> trading.paper_engine  @57 
+trading.live.client -> core.logger  @28 
+trading.live.console -> core.logger  @30 
+trading.live.engine -> core.config  @29 
+trading.live.engine -> core.logger  @30 
+trading.live.engine -> trading.live.client  @31 
+trading.live.engine -> trading.live.safety  @32 
+trading.live.executor -> core.logger  @21 
+trading.live.executor -> core.market_store  @22 
+trading.live.executor -> trading.live.engine  @23 
+trading.live.safety -> core.config  @24 
+trading.live.safety -> core.logger  @25 
+trading.paper_engine -> core.config  @12 
+trading.paper_engine -> core.event_bus  @13 
+trading.paper_engine -> core.logger  @14 
+trading.paper_engine -> core.market_store  @15 
+trading.paper_engine -> database.db  @16 
+trading.paper_engine -> database.models  @18 
+trading.paper_engine -> database.repository  @17 
+trading.paper_engine -> trading.models  @19 
+trading.paper_engine -> trading.position_manager  @21 
+trading.paper_engine -> trading.risk_manager  @20 
+trading.position_manager -> core.config  @12 
+trading.position_manager -> core.event_bus  @13 
+trading.position_manager -> core.logger  @14 
+trading.position_manager -> core.market_store  @15 
+trading.position_manager -> database.db  @16 
+trading.position_manager -> database.models  @18 
+trading.position_manager -> database.repository  @17 
+trading.position_manager -> trading.models  @20 
+trading.position_manager -> trading.risk_manager  @19 
+trading.risk_manager -> core.config  @7 
+trading.risk_manager -> core.logger  @8 
+trading.risk_manager -> trading.models  @9 

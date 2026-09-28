@@ -1,0 +1,10 @@
+{
+  "edges": 21,
+  "crossings": 0,
+  "crossing_pairs": [],
+  "over150": 0,
+  "through_node": 3,
+  "through_label": 5,
+  "worst_label_gap": 31.580001831054688,
+  "worst_marker_gap": 22.179977416992188
+}

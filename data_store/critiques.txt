@@ -1,0 +1,783 @@
+# SPESIFIKASI FINAL — ROMBAK TOTAL HUD `trading-bot`
+
+Basis: **MINIMAL-FUNCTIONAL R1** (skor 7, tiga zona) + graft dari **HUD-12** (kontrak token 12-kolom, guard test, palette AA) + **Ledger 12** (orderbook `flex:1 1 0`, tabel posisi sebagai grid, perbaikan `tonexty`).
+
+Semua angka di bawah hasil hitung nyata terhadap CSS yang akan ditulis, bukan estimasi.
+
+---
+
+## 0. FAKTA DASAR (sudah diverifikasi)
+
+- 108 test lulus (`python -m unittest discover -s tests` → `Ran 108 tests ... OK`).
+- `update_callbacks.py` punya **68 `Output()` call site → 65 ID unik**. Ditambah 6 ID tree yang dibuat helper `_tree_node()` via parameter `id=` (regex scan `hud.py` buta ini) = 71. `dashboard/app.py` menambah 2 interval + 1 wrapper = **74?** Não. Rekonsiliasi final ada di §2 — **72 ID**, sudah cocok dengan daftar di brief.
+- `hud_figures.py:687-694` **sudah tidak punya** `scaleanchor`/`scaleratio` (sudah dihapus sebelumnya). `tests/test_neural_net_layout.py:241-242` dan `:265-266` sudah mengunciKetiadaannya. **Jangan pulihkan.**
+- `hud_figures.py:468-474` masih mengisi token dari `_TOKEN_UNIVERSE` → 12 node "Perpetual Satellite" tanpa data. Itu bug aktif, dihapus di §7.
+- `update_callbacks.py:1156` `marquee_text = base + " · " + base` masih ada. Karena marquee dihapus, string jadi dobel. **Satu baris wajib dihapus.**
+- `update_callbacks.py:1102` mengirim `className="text-muted"`; kelas itu **tidak ada** di CSS. Harus dibuat.
+
+---
+
+## 1. GRID —_tempel apa adanya_
+
+```css
+/* ============================================================
+   HUD 12-COLUMN TERMINAL — satu grid untuk seluruh halaman.
+   Setiap panel = grid-column: span N. Tidak ada row full-width
+   yang hand-roll padding sendiri. Aturan vertikal kontinu dari
+   topbar sampai footer.
+   ============================================================ */
+
+:root {
+  /* --- SPACING: basis 4px, 6 step --- */
+  --s-1: 2px;  --s-2: 4px;  --s-3: 8px;
+  --s-4: 12px; --s-5: 16px; --s-6: 24px;
+  --gutter: 6px;              /* SATU token gutter, dipakai grid + bar + container */
+  --pad-body: var(--s-2);     /* SATU nilai padding panel body, tanpa pengecualian */
+  --pad-bar:  var(--s-2);     /* padding dalam topbar / rail / tape / footer */
+
+  /* --- HEIGHT CONTRACT: satu-satunya sumber tinggi panel --- */
+  --h-topbar:  28px;   /* zona 1A */
+  --h-rail:    62px;   /* zona 1B */
+  --h-tape:    20px;   /* zona 1C */
+  --h-zone2:  356px;   /* zona 2 — price + stack */
+  --h-zone3:  260px;   /* zona 3 — 4 sel analytics */
+  --h-pipe:    44px;   /* pipeline strip */
+  --h-head:    22px;   /* .hud-panel-header, seragam di semua panel */
+  --h-scroll: 230px;   /* isi dua scroll box (positions, trade logs) */
+
+  /* --- BUDGET GRAFIK: div pemilik tinggi, figure TIDAK punya height= --- */
+  --h-chart:    179px; /* candlestick; 326 - 4 - 143 */
+  --h-tape-ob:  143px; /* orderbook; 11 baris x 13px */
+  --h-ob-row:    13px;
+  --h-conv:     113px; /* scanner: 181 - 44 - 16 - 8 */
+  --h-equity:   230px;
+  --h-neural:   238px; /* 260 - header 22, body flush */
+  --h-spark:     42px; /* tinggi grafik sparkline (label 16px di atasnya) */
+  --h-sparkblk:  58px; /* 16 label + 42 graph */
+  --h-kpi-row:   28px; /* 6 baris = 168; 58 + 4 + 168 = 230 */
+}
+
+html, body {
+  /* bukan 100vw: 100vw menghitung scrollbar gutter -> overflow horizontal
+     yang lalu dimakan overflow-x:hidden. Persis bug yang ada sekarang. */
+  margin: 0; padding: 0;
+  max-width: 100%;
+  background: var(--bg-app);
+  color: var(--ink-0);
+  font-family: var(--font-mono);
+  font-size: var(--fs-3);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+.hud-container {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--gutter);
+  row-gap: var(--gutter);
+  align-items: start;      /* panel TIDAK PERNAH diregangkan ke tinggi saudara */
+  align-content: start;
+  width: 100%;
+  max-width: 100%;
+  padding: var(--s-3);
+}
+
+/* ===== ZONA 1: identitas + akun ===== */
+.p-topbar { grid-column: span 12; height: var(--h-topbar); }
+.p-rail   { grid-column: span 12; height: var(--h-rail); }
+.p-tape   { grid-column: span 12; height: var(--h-tape); }
+
+/* ===== ZONA 2: harga dominan + risiko ===== */
+.p-chart  { grid-column: span 8; height: var(--h-zone2); }
+.p-stack  { grid-column: span 4; height: var(--h-zone2);
+            display: flex; flex-direction: column;
+            gap: var(--gutter); min-height: 0; }
+.p-pos    { flex: 0 0 138px; height: 138px; }
+.p-scan   { flex: 1 1 auto; height: 212px; min-height: 0; }
+
+/* ===== ZONA 3: pipeline + analytics ===== */
+.p-pipe   { grid-column: span 12; height: var(--h-pipe); }
+.p-equity { grid-column: span 3; height: var(--h-zone3); }
+.p-logs   { grid-column: span 3; height: var(--h-zone3); }
+.p-kpi    { grid-column: span 3; height: var(--h-zone3); }
+.p-neural { grid-column: span 3; height: var(--h-zone3); }
+
+/* Pitch kolom @1920px: container 1904 - 11 gutter x 6 = 1838 / 12 = 153.17px.
+   p-chart = 1267.36px · p-stack = 630.68px · p-zone3-cell = 471.50px.
+   Setiap panel adalah span dari track list yang sama, jadi tidak ada satu pun
+   garis vertikal yang tidak lanjut ke baris berikutnya. */
+```
+
+**Tinggi halaman @1920px:** 28 + 62 + 20 + 356 + 44 + 260 + (5 gutter × 6) + (2 × 8 padding) = **816px**. Sekarang 1132px. Satu layar 1080p, tanpa scroll.
+
+### Breakpoint
+
+```css
+@media (max-width: 1439px) {
+  .p-chart { grid-column: span 12; }
+  .p-stack { grid-column: span 12; height: auto; min-height: 0;
+             display: grid;
+             grid-template-columns: repeat(12, minmax(0, 1fr));
+             column-gap: var(--gutter); row-gap: var(--gutter); }
+  .p-pos   { grid-column: span 6; height: 138px; }
+  .p-scan  { grid-column: span 6; height: 212px; }
+  .p-equity, .p-logs, .p-kpi, .p-neural { grid-column: span 6; }
+}
+@media (max-width: 1023px) {
+  .p-pos, .p-scan, .p-equity, .p-logs, .p-kpi, .p-neural { grid-column: span 12; }
+}
+@media (max-width: 767px) {
+  /* body yang scroll, BUKAN dipotong. overflow-x:hidden dihapus. */
+  .hud-container { min-width: 720px; }
+}
+```
+
+Baris analytics 3-kolom **tidak pernah** runtuh ke 1 kolom sebelum 767px. Itu yang bikin halaman lama 1944px di 1280px.
+
+---
+
+## 2. PANEL — 72 ID, tidak ada yang hilang
+
+### Z1A · TOPBAR — `span 12` · 28px · border bawah 1px, tanpa shadow, tanpa hover
+| ID | Peran |
+|---|---|
+| `hud-utc-clock` | UTC hh:mm:ss, tabular |
+| `hud-latency-badge` | ms |
+| `hud-spot-btc` | sel 92px, nilai rata-kanan |
+| `hud-spot-eth` | sel 92px |
+| `hud-spot-sol` | sel 92px |
+| `hud-avg-edge` | sel 88px |
+
+Isi: kiri = `PAPER` + satu span `LIVE` (kelas `.pulse-live` — **satu-satunya elemen beranimasi di seluruh aplikasi**). Kanan = 6 sel fixed-width `display:grid; grid-template-columns:34px 1fr` supaya kolom angka rata kanan dan digit tidak jitter. Tanpa `●` beacon, tanpa badge glow, tanpa `translate3d`.
+
+### Z1B · ACCOUNT RAIL — `span 12` · 62px
+| ID | Peran |
+|---|---|
+| `hud-giant-pnl` | TOTAL ACCRUED PNL, **30px** (dari 52px VT323) |
+| `hud-wallet-sub` | FILLS / OPEN POSITIONS, 10px |
+| `hud-stat-balance` | BALANCE |
+| `hud-stat-equity` | EQUITY |
+| `hud-stat-winrate` | WIN RATE |
+| `hud-stat-risk` | DRAWDOWN RISK n/10 |
+
+`grid-template-columns: 1.6fr 1.2fr 1fr 1fr .9fr .9fr`. `align-content:start`, **tanpa** `justify-content:space-between` dan **tanpa** `height:100%` — dua aturan itulah yang memprodksi celah 40% yang dilaporkan. Rumus tinggi: 4 pad + 11 label + 30 nilai + 13 sub + 4 pad = 62. ✓
+
+### Z1C · EVENT TAPE — `span 12` · 20px · statis
+| ID | Peran |
+|---|---|
+| `hud-live-ticker-text` | 70% lebar, ellipsis |
+| `hud-footer-ticker-text` | 30% lebar, garis batas kiri 1px, ellipsis |
+
+Dua sel, dua baris? Tidak. **Dua sel satu baris.** Marquee, keyframe, dan duplikasi `base + " · " + base` dihapus. `mask-image: linear-gradient(90deg,#000 88%,transparent)` supaya string panjang memudar, bukan terpotong di tengah glif.
+
+### Z2A · PRICE + L2 — `span 8` · 356px (1267px) · panel dominan
+| ID | Peran |
+|---|---|
+| `hud-chart-symbol-select` | Dropdown 110×20 di header, gaya via kelas |
+| `hud-chart-price-display` | header kanan, 16px, tabular, `--up`/`--down` |
+| `hud-candlestick-chart` | `dcc.Graph` 179px |
+| `hud-orderbook-tape` | 143px, 11 baris |
+
+Body = 326px: 179 chart + 4 gap + 143 tape. Baris orderbook `flex:1 1 0; min-height:13px` → 11 baris mengisi tepat, tidak ada sisa ragged. Kolom `1.15fr .8fr 1fr .9fr` supaya `ASK $76,420.00` muat di 9.5px mono tanpa scroll horizontal (masalah yang muncul di 1310px sekarang). `.ob-bar` tetap z-0 di belakang teks z-1, tapi **hapus** `will-change:width` (promosi layer untuk properti yang memicu reflow). Baris spread = pita `--hold` full-width, shimmer dihapus.
+
+### Z2B-1 · OPEN POSITIONS — di dalam `.p-stack` · 138px
+| ID | Peran |
+|---|---|
+| `hud-positions-table` | grid 4 kolom, scroll |
+| `hud-positions-count-badge` | header kanan |
+
+`.positions-grid-table` jadi `display:grid` 4 kolom `1.1fr .9fr 1fr 1fr`, header row 20px + 3 baris × 26px = 98px di dalam box 107px. `height: var(--h-scroll); overflow-y:auto; min-height:0` — **`max-height:190px` dihapus**, itu satu-satunya box yang tumbuh saat data masuk. Engine punya `max_open_positions=3`, jadi 3 baris = tabel penuh, scroll cuma katup keamanan. Kolom ENTRY/SL/TP tidak ditambah sekarang: butuh 3 `Output` baru, itu Fase 2 (§10).
+
+### Z2B-2 · DIRECTION SCANNER — di dalam `.p-stack` · 212px
+| ID | Peran |
+|---|---|
+| `hud-scanner-long-odds` | 0.62, `--up`, 16px |
+| `hud-scanner-consensus` | chip, `stance-long/short/neutral` |
+| `hud-scanner-short-odds` | 0.38, `--down`, 16px |
+| `hud-scanner-agent-strip` | **1 baris ringkas**, bukan 4 chip 7px |
+| `hud-convergence-chart` | `dcc.Graph` 113px |
+
+Body = 181px: 44 odds + 4 + 16 agent + 4 + 113 chart. Di bawah baris odds, diverging bar 2px `LONG ████░░░░ SHORT` supaya split itu satu glance. Chip agen 7px + `overflow-x:auto` + scrollbar tersembunyi dihapus; `.agent-strip` jadi `flex-wrap:wrap; gap:var(--s-1)` pada 9px, minimal 9px. `.agent-chip.abstained` **tidak lagi `opacity:0.45`** — itu composite ke 2.25:1, yaitu格里fos satu-satunya yang diada. Abstain = teks `--ink-2` full opacity + border dashed + nilai literal `—`. Chart: sumbu y dikunci `[0,1]` dengan tick `0% / 50% / 100%` (sekarang labelnya `$0.00/$0.50/$1.00` — itu probabilitas, bukan dolar).
+
+### Z3A · PIPELINE STRIP — `span 12` · 44px
+13 ID dalam satu pita. Band atas 20px = `hud-tree-stage-tag` rata kanan. Band bawah 24px = `grid-template-columns: 1fr 10px 1fr 10px 1fr 10px 1fr 10px 1fr 10px 1fr`, 5 panah di kolom eksplisit (bukan `justify-content:space-between` yang menyuntik 125.7px udara ke tiap gap).
+
+| ID | Peran |
+|---|---|
+| `hud-tree-node-feed` … `hud-tree-node-outcome` (6) | sel 1fr, kicker 9px + nama 11px, tanpa baris meta |
+| `hud-tree-arrow-feed` … `hud-tree-arrow-exec` (5) | chevron 10px statis |
+| `hud-tree-flow-rail-fill` | underline 2px di dasar band |
+| `hud-tree-stage-tag` | header kanan |
+
+Baris legenda dihapus (kicker setiap sel sudah menyebut tahapnya). Rail 3px terpisah dihapus, jadi bagian dari pita 44px. `arrowPulse` dihapus total: `.arrow-pending` cuma set `color` + `opacity` tanpa membatalkan animasi, jadi panah yang **belum** dilewati tetap slide 3px dan berkedip hijau tiap 1.2s — gerak meng accomplishments klaim yang datanyaolak. `nodeIdleBreath` dihapus; enam kotak itu langkah proses statis, bernapas tidak bermakna, dan karena keyframe itu memegang `transform`+`box-shadow` terus-menerus semua hover di kotak mati. Panah: done = `--up` solid, pending = `--ink-2` `opacity:.45`, tanpa keyframe. `stage-active`/`stage-halt` = ganti warna border + background statis + `transition: color .18s, border-color .18s`.
+
+**13 ID harus tetap resolve.** Jangan `display:none` satu pun.
+
+### Z3B · EQUITY — `span 3` · 260px (471.5px)
+`hud-realized-tag` (header, tabular, `--up`/`--down`), `hud-equity-area-chart` (230px).
+**Perbaikan figure wajib** (`hud_figures.py:742-752`): `fill="tozeroy"` memaksa 0 masuk domain-y, jadi equity $10.000 tergambar garis datar di 95% tinggi plot dengan blok padat di bawahnya — itu "nearly flat line, huge empty area" di screenshot. Ganti: trace baseline `initial_balance` dulu, lalu equity `fill="tonexty"`. `add_hline` yang sekarang **tidak bisa** jadi acuan `tonexty` — harus jadi trace nyata. Tambah `yaxis.range` di-pad ke min/max data, `dtick`, title sumbu `EQUITY (USDT)` / `TIME`, dan blok anotasi kanan `CURRENT / PEAK / DD%`.
+
+### Z3C · EXECUTION LOG — `span 3` · 260px
+`hud-trade-logs-stream`. `height: var(--h-scroll); overflow-y:auto; min-height:0`. **`max-height:205px` dihapus** — box ini pernah 245px melawan equity 242px dan jadi penggerak tinggi baris. Baris jadi grid 5 kolom: `TIME | side | SYM | QTY @ PX | PnL`. `.badge-green` yang dipakai callback atas sampai 12 chip historis jadi **chip datar tanpa animasi**; pulse pindah ke `.pulse-live` (satu span di topbar). `logSlideIn` dihapus. Kelas `.text-muted` **dibuat** (callback mengirimkannya di `update_callbacks.py:1102`, sekarang tidak ada efeknya sama sekali).
+
+### Z3D · STRATEGY KPIs — `span 3` · 260px
+`hud-sparkline-pnl`, `hud-sparkline-volume` (blok 58px: label 16 + graph 42), lalu 6 baris tabel 28px = 168. Total 58+4+168 = 230. ✓
+`hud-kpi-sharpe`, `hud-kpi-pf`, `hud-kpi-mdd`, `hud-kpi-duration`, `hud-kpi-slippage`, `hud-kpi-fees`.
+
+**`hud-kpi-sharpe` dan `hud-kpi-mdd` harus `N/A`, bukan `0.00`.** `update_account_stats` dipanggil sekali dengan `profit_factor` saja; `sharpe_ratio` dan `max_drawdown` default `None` dan dilewati guard `if ... is not None` di `repository.py:362-367`. `risk_manager.calculate_sharpe_ratio` dan `calculate_max_drawdown` ada tapi nol pemanggil non-test. Seed `"0.00"` di layout → `"N/A"`, dan `update_callbacks.py:1195` `sharpe_val = "0.00"` → `"N/A"`.Trader yang baca MAX DRAWDOWN 0.00% sedang diberi info salah.
+
+### Z3E · SIGNAL CONSTELLATION — `span 3` · 260px (471.5px)
+`hud-neural-graph` saja. `dcc.Graph style={'height':'100%','width':'100%'}`, body `padding:0` (modifier `.hud-panel-body--flush`, dipakai **sekali** di sini). Plot area 459×224. Rincian di §7.
+
+### ROOT / SHIM — di luar grid, tidak disentuh
+| ID | Lokasi |
+|---|---|
+| `dashboard-interval` | `app.py:51-55`, 500ms, tidak diubah |
+| `dashboard-slow-interval` | `app.py:61-65`, 60000ms, tidak diubah |
+| `hud-main-content` | `app.py:68`, tidak diubah |
+| `header-balance`, `header-equity`, `header-pnl`, `header-positions`, `performance-stats`, `equity-chart`, `drawdown-chart`, `active-positions-table`, `trade-history-table`, `sentiment-summary`, `news-feed-container`, `agent-logs-container`, `indicator-values`, `candlestick-chart`, `chart-symbol`, `chart-timeframe`, `agent-log-filter`, `tab-content`, `main-tabs` | `app.py:71-91`, div `display:none`, **tidak boleh dipindah** |
+
+Hitungan: 6 + 6 + 2 + 4 + 2 + 5 + 13 + 2 + 1 + 8 + 1 = **50** di `hud.py`; + 19 shim + 2 interval + 1 `hud-main-content` = **72**. ✓
+
+Satu-satunya perubahan di `app.py`: `backgroundColor:"#dfd5b8"` → `"#d9cfb2"` (`--bg-app`).
+
+---
+
+## 3. TYPE SCALE
+
+```css
+:root {
+  --font-mono: 'Share Tech Mono', 'Space Mono', ui-monospace, 'Courier New', monospace;
+  /* VT323 + --font-pixel DIHAPUS. Keberadaannya itulah yang memaksa hero 52px. */
+
+  --fs-1:  9px;   /* chart tick, tree kicker, agent line, log row */
+  --fs-2: 10px;   /* panel header, label kolom, tape, footer */
+  --fs-3: 12px;   /* body, sel tabel, judul pipeline, orderbook */
+  --fs-4: 16px;   /* metrik: odds, price display, KPI value */
+  --fs-5: 30px;   /* hero: hud-giant-pnl SAJA */
+  --fw: 400; --fw-b: 700;
+  --ls-label: .04em; --ls-head: .08em;
+}
+```
+
+- Semua `fontSize` inline di `hud.py` (9, 9.5, 10, 10.5, 11) dan semua `color`/`fontFamily` inline dipindah ke kelas.
+- **7px dan 8px dihapus** — keduanya dipakai untuk label mikro bernilai tertinggi (`.agent-chip`, `.tree-node-kicker`, `.stat-label`).
+- `letter-spacing` 0 kecuali `+0.08em` pada header uppercase. `1.15rem` di `.bot-brand` dihapus (sistem px, satu `rem` itu bug unit).
+- `font-variant-numeric: tabular-nums` di `html, body` → semua kolom angka rata, dan nilai yang tick tiap 500ms tidak menggetarkan tetangganya.
+- Tidak ada `text-shadow` di mana pun.
+
+---
+
+## 4. COLOR SYSTEM
+
+```css
+:root {
+  /* SURFACE — 3 nilai. bg-panel = paper_bgcolor = plot_bgcolor Plotly,
+     jadi persegi chart tidak terlihat di panelnya sendiri. */
+  --bg-app:   #d9cfb2;   /* halaman */
+  --bg-panel: #ece3cb;   /* panel chrome DAN Plotly */
+  --bg-inset: #e2d8bd;   /* sel tabel, chip, scroll box, header node tree */
+  --bg-bar:   #14120c;   /* header panel, topbar */
+  --bg-bar-tx:#f2ecdd;   /* teks di atas bg-bar: 15.9:1 */
+
+  /* NEUTRAL — 3, bukan 5 abu-abu */
+  --ink-0: #14120c;   /* teks utama, border, garis */
+  --ink-1: #484234;   /* label sekunder, tick sumbu */
+  --ink-2: #5c5646;   /* muted, abstained, placeholder — 4.70:1, BUKAN opacity */
+
+  /* SEMANTIK — 4, satu arti masing-masing, tanpa varian */
+  --up:   #0a5e2d;   /* PnL positif, stance LONG, bid, win       5.10:1 (paling buruk) */
+  --down: #a01519;   /* PnL negatif, stance SHORT, ask, loss     5.17:1 */
+  --hold: #7f4500;   /* stage stalled/halt, risk, spread lebar   4.91:1 */
+  --info: #0d5177;   /* struktur pasar: node agen/feed, sumbu     5.49:1 */
+
+  --z-plot-under: 0;  /* .ob-bar */
+  --z-plot-over:  1;  /* teks orderbook */
+}
+```
+
+Rasio terukur terhadap ketiga permukaan (terlemah di `--bg-app`): `ink-0` 12.05 · `ink-1` 6.42 · `ink-2` 4.70 · `up` 5.10 · `down` 5.17 · `hold` 4.91 · `info` 5.49. Semua ≥ 4.5:1. Putih di atas `--up`/`--down`/`--hold` = 7.92 / 8.03 / 7.63, jadi badge terisi tetap terbaca. Yang sekarang gagal: `--green-neon #009933` 2.72, `--amber-warning #c27800` 2.55, `--red-alert #d02020` 3.89.
+
+**Aturan warna:**
+
+1. **Merah = rugi, di mana pun.** Chip stance `#cc3333` dan `--red-alert #d02020` runtuh ke `--down`.
+2. **State tidak pernah pakai opacity pada teks.** `opacity:0.45` di atas `#ede4cc` composite ke 2.25:1 — itu grifos satu-satunya yang_dialogue scanner strip. Abstain = `--ink-2` full opacity + border dashed + `—`.
+3. **Isian = token yang sama pada alpha 10–18% atas `--bg-inset`.** Tidak ada hex kedua. Bar orderbook adalah bentuk, bukan teks, jadi tidak butuh 4.5:1.
+4. **Hijau = PnL positif ATAU stance LONG. Tidak ada hijau lain.** `#009933`, `#00e650`, `#00ff66` (header tag), `rgba(184,72,…)` (glow) semuanya hilang.
+5. **Tidak ada warna dekoratif.** Border panel, tag header, dan chip netral tidak membawa hue.
+6. **Nol hex di luar blok `:root`.** Lint: `grep -nE '#[0-9a-f]{3,6}' dashboard/assets/style.css` → hanya boleh hit di dalam blok `:root`. Saat ini ada 30 hex di body aturan dan `#000` hardcoded 40×.
+7. `hud_figures.py` mengimpor enam nilai yang sama; `INK_MUTED = "#665e4e"` dihapus (tidak ada di token mana pun).
+
+---
+
+## 5. CHROME DASAR
+
+```css
+.hud-panel {
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--ink-0);
+  border-radius: 0;
+  overflow: hidden;              /* hanya di sini, untuk megang border */
+  /* box-shadow, transition, will-change: SEMUA dihapus */
+}
+.hud-panel:hover { /* DIHAPUS. Panel data tidak merespons kursor; posisi
+                      kursor di atas chart tidak bermakna, dan hover yang
+                      tersisa cuma bump shadow yang tidak kelihatan. */ }
+
+.hud-panel-header {
+  flex: 0 0 var(--h-head); height: var(--h-head);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-3); padding: 0 var(--s-3);
+  background: var(--bg-bar); color: var(--bg-bar-tx);
+  font: var(--fw-b) var(--fs-2)/1 var(--font-mono);
+  letter-spacing: var(--ls-head); text-transform: uppercase;
+  border-bottom: 1px solid var(--ink-0);
+}
+.hud-panel-body {
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--pad-body);              /* SATU nilai, 4px */
+  background: var(--bg-panel);
+  display: flex; flex-direction: column; min-width: 0;
+  overflow: visible;                     /* DIHAPUS dari body — konten boleh
+                                           layout jujur, bukan dihancurkan */
+}
+.hud-panel-body--flush { padding: 0; }   /* dipakai SEKALI, untuk p-neural */
+
+/* Dua satu-satunya box yang scroll di seluruh aplikasi. */
+.positions-grid-table, .trade-log-stream {
+  flex: 1 1 auto; min-height: 0; height: var(--h-scroll);
+  overflow-y: auto; overflow-x: hidden;
+  background: var(--bg-inset); border: 1px solid var(--ink-0);
+}
+.scrollbox::-webkit-scrollbar { width: 5px; height: 5px; }
+.scrollbox::-webkit-scrollbar-track { background: var(--bg-inset); }
+.scrollbox::-webkit-scrollbar-thumb { background: var(--ink-1); }
+.scrollbox { scrollbar-width: thin; scrollbar-color: var(--ink-1) var(--bg-inset); }
+
+/* Guard global. WAJIB. Saat ini style.css punya 0 blok ini sementara 11
+   animasi infinite tidak bisa dimatikan. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+```
+
+Aturan penyelaras (these do more for "rapih" than any spacing value):
+- `align-items:start` di `.hud-container` — panel tidak pernah lebih tinggi dari isinya. Ini yang membunuh 200px mati di wallet dan 228px di positions.
+- Setiap sel angka `text-align:right; font-variant-numeric:tabular-nums`. Setiap sel label `text-align:left; text-transform:uppercase; color:var(--ink-1)`. **Tidak ada angka yang center di seluruh dashboard.**
+- `max-height` dilarang. Dipakai di dua elemen (`positions-grid-table` 190px, `trade-log-stream` 205px) dan itu satu-satunya hal di halaman yang tinggi berubah-ubah saat data datang.
+- `min-height:0` di setiap anak flex yang scroll — tanpanya anak flex menolak menyusut di bawah ukuran konten.
+
+---
+
+## 6. YANG DIHAPUS, DAN KENAPA
+
+| Yang dihapus | Kenapa |
+|---|---|
+| `body::after` CRT scanline (`style.css:48-58`) | z-index 9999 di atas z-scale 0/1/2, opacity 0.85, gradien 0.01-alpha (tak terlihat) yang degrade tiap pasangan warna: amber 2.55→2.33, green 2.72→2.48, red 3.89→3.56. |
+| `marqueeScroll` + `text + text` | String `·`-joined sepanjang 1000+ char tak terbaca saat bergerak, dan callback re-render tiap 60 detik sehingga animasi restart mid-scroll tiap menit. |
+| `livePulse` di `.badge-green` | Callback mengomposisinya ke 12 chip historis, jadi 13 elemen berdenyut selamanya — termasuk fill 3 jam lalu. Pulse pindah ke `.pulse-live` (1 span). |
+| `beaconPulse`, `pnlGlow`, `spreadShimmer`, `logSlideIn`, `nodeIdleBreath`, `arrowPulse`, `neural-edge-flow`, `neural-node-breathe`, `nodeActiveTick`, `nodeHaltBlink` | Semua tanpa仝encode state, atau activelyMq contradiction. `arrowPulse` outright bohong. `neural-node-breathe` merusak plot. State stage sudah dibawa warna border amber/hijau/merah. |
+| `neural_flow.css` (seluruh file) | Kedua keyframe rusak. File ini sendiri sudah bilang "tidak ada informasi yang hilang saat motion mati" di baris 102-107. |
+| 11 deklarasi `will-change` | Promosi layer permanen. 3 Collapse menganimasikan properti yang tidak composable (`box-shadow`, `text-shadow`) atau yang memicu layout (`width`). `.hud-topbar` promosi layer untuk transform yang tak pernah terjadi. |
+| VT323 + `--font-pixel` | Keberadaannya yang memaksa hero 52px. |
+| `@import` 3 Google Font |Butuh satu family monospace. |
+| `.hud-panel:hover` | Chart bukan tombol. |
+| 4 resep hard-shadow (`2px 2px 0`, `1px 1px 0`, `3px 3px 0`, `5px 6px 0`, glow `0 0 6px`) | Shadow 2px di gutter 6px memakan sepertiga gap, bikin panel tampak lebih dekat di kanan than di kiri. Sumber terbesar grid terlihat misregistered. |
+| `max-width:100vw` + `overflow-x:hidden` di body | 100vw menghitung scrollbar gutter → overflow horizontal pasti, lalu `overflow-x:hidden` memakannya di balik `overflow:hidden` panel. Konten terpotong, tidak bisa dijangkau. |
+| `overflow:hidden` ganda (panel + body) | Dua container sudah dipaksa dua escape hatch horizontal-scroll yang tidak bisa ditemukan user. |
+| 4 override padding inline (4px ×3, 2px ×1) | Penyebab langsung panel tidak rata satu sama lain, 12px kumulatif. |
+| Baris legenda + rail 3px terpisah di tree | Dilipat ke pita 44px. |
+| `.hud-specialist-strip`, `.text-amber`, `transform transition` di `.badge-black`, `box-sizing` dobel di `.hud-container`, `font-family` dobel di `.orderbook-tape` | Selector mati atau no-op. Tambah lint: setiap `.class` di style.css harus muncul sebagai string `className` di `dashboard/**`. |
+| Header block "120 FPS SMOOTH / hardware accelerated" | Faktanya salah: 5 dari 11 `will-change` menyasar properti non-compositable, hero 52px menganimasikan `text-shadow`, overlay-nya pseudo-element statis. Komentar yang salah adalah alasan orang berikutnya menambahkan layer yang sama lagi. |
+| Teks marketing footer `ZERO LEAKAGE · SQLITE WAL LOCALHOST · ALL SYSTEMS NOMINAL` | Satu baris full-width untuk hal yang tidak bisa diverifikasi pembaca. |
+
+**Kelas yang callback kirim dan WAJIB tetap ada di CSS:** `agent-chip`, `abstained`, `stance-long/short/neutral`, `log-chip`, `badge-green`, `badge-red`, `badge-black`, `log-time`, `text-green`, `text-red`, `text-muted`, `trade-log-row`, `orderbook-row`, `ask`, `bid`, `ob-price`, `ob-size`, `ob-total`, `ob-bar`, `ob-bar-ask`, `ob-bar-bid`, `orderbook-spread`, `position-compact-row`, `position-symbol-chip`, `positions-grid-table`, `odds-consensus-badge`, `tree-step-node`, `tone-blue/green/green-edge`, `stage-done/active/halt`, `tree-arrow`, `arrow-done/pending`, `tree-rail-fill`, `rail-halt`, `rail-complete`.
+
+**Kelas yang DIHAPUS dari layout (bersamaan emitenya):** `bot-brand`, `badge-outline-green`, `header-tag`, `legend-dot`, `decision-flow-legend`, `ticker-dot`, `ticker-marquee-content`, `ticker-marquee-wrapper`, `tree-canvas-wrapper`, `tree-flow-rail`, `giant-pnl` (dipakai ulang sebagai kelas hero tanpa glow), `wallet-box-content`, `wallet-stats-grid`, `wallet-stat-item`, `wallet-subtext`, `drawdown-risk-row`, `scanner-odds-row`, `scanner-agent-strip`, `agent-strip`, `agent-strip-label`, `odds-item`, `odds-label`, `odds-val-long/short`, `analytics-metric-table`, `stat-label`, `stat-val`, `spot-pill`, `topbar-left/right`, `hud-live-ticker-tape`, `hud-footer`, `tree-node-title/kicker/meta`, `grid-4-col`, `grid-3-col`, `stat-val`, `hud-ticker` — semua dihitung ulang oleh kelas baru.
+
+`.text-green`/`.text-red` **dipertahankan** (callback mengirimnya), ditulis ulang ke `color: var(--up)` / `var(--down)`. `.text-muted` **ditambahkan** (kosong sekarang).
+
+---
+
+## 7. NEURAL NET — FIX KONKRET
+
+Target: panel 471.5px, graph div 471×238, plot area 459×224 (margin `l6 r6 t6 b8`). Rasio plot 2.05:1.
+
+**1. Hapus token hantu.** `hud_figures.py:468-474` — loop yang mengisi `display_tokens` dari `_TOKEN_UNIVERSE` sampai 12. Dengan `signal_map={}` figure tetap emit 22 marker dan 24 edge, 12 di antaranya `CORE_ENGINE -> token`, untuk token yang murni dekorasi. Dua baris:
+```python
+display_tokens = [t for t in active_tokens][:len(TOKEN_SLOTS)]
+```
+
+**2. Ganti `TOKEN_SLOTS` ke dua baris lurus, 6 slot masing-masing.** Ring radial lama menaruh 6 slot dalam busur setebal 0.66 unit = 143px untuk 6 label. baru:
+```python
+TOKEN_SLOTS = [
+    (-0.90, -0.30), (-0.54, -0.30), (-0.18, -0.30), (0.18, -0.30), (0.54, -0.30), (0.90, -0.30),
+    (-0.90, -0.76), (-0.54, -0.76), (-0.18, -0.76), (0.18, -0.76), (0.54, -0.76), (0.90, -0.76),
+]
+```
+`xaxis.range=[-1.02,1.02]` → 225 px/unit. Pitch x 0.36 unit = **81px**. Label 11px Share Tech Mono = 6.6px/char, ticker 4 char terburuk = 26.4px. Gutter terburuk = **54.6px**, jauh di atas lantai keterbacaan 3× line box (39px). `yaxis.range=[-0.90,0.78]` → 133 px/unit. Pitch y 0.46 unit = 63px, line box 13px. Nol tumpang tindih.
+
+**3. Perkecil sistem ke 6 node, jadi pita 3×2 di atas baris token.** Hapus `MACRO_FRED`, `BINANCE_FEED`, `YF_FALLBACK`, `COINGECKO` — teks statis tanpa variasi per-frame, dan 4 dari 12 edge yang selalu nyala. `BINANCE_FEED` juga salah nama di sistem yang feed-nya Hyperliquid.
+```python
+NEURAL_SYSTEM_NODES = {
+    "CORE_ENGINE":     (-0.62, 0.60, "CORE",  INK_BLACK, "Central AI Ingest"),
+    "DECISION_GATE":   ( 0.00, 0.60, "RISK",  INK_BLACK, "Risk Sizing Gate"),
+    "EXECUTION_AGENT": ( 0.62, 0.60, "EXEC",  INK_BLACK, "Paper Engine Exec"),
+    "RF_MODEL":        (-0.62, 0.16, "RF",    INK_BLACK, "ML Classifier (7-feat)"),
+    "SENTIMENT":       ( 0.00, 0.16, "SENT",  INK_BLACK, "VADER + FinBERT"),
+    "TECH_TA":         ( 0.62, 0.16, "TA",    INK_BLACK, "pandas-ta (RSI/MACD/BB)"),
+}
+NEURAL_SYSTEM_EDGES = [
+    ("CORE_ENGINE","DECISION_GATE"), ("CORE_ENGINE","EXECUTION_AGENT"),
+    ("CORE_ENGINE","RF_MODEL"),      ("CORE_ENGINE","SENTIMENT"),
+    ("DECISION_GATE","EXECUTION_AGENT"), ("DECISION_GATE","TECH_TA"),
+    ("TECH_TA","RF_MODEL"),          ("SENTIMENT","RF_MODEL"),
+]
+```
+Pitch x sistem 0.62 unit = 140px, pitch y 0.44 unit = 58px. Jarak baris sistem terbawah (y=0.16, `textposition="bottom center"`) ke baris token atas (y=-0.30, `top center`) = 63px untuk marker 14px + label 13px. Bersih.
+
+**4. Potong edge.** `hud_figures.py:515` `all_edges.append(("CORE_ENGINE", sym))` **tanpa syarat** dihapus. Edge token hanya kalau `sig["direction"]` directional, dan berlabuh ke hub terdekat dari `{CORE_ENGINE, DECISION_GATE, EXECUTION_AGENT}` (jarak Euclidean dari slot token). `bow = 0.06` fixed, bukan `length * 0.12` — bow yang skalar dengan panjang membuat edge panjang melengkung jauh lebih dalam dan bundel menyeberang jadi pita hatching. Edge idle → `rgba(28,18,12,0.16)`. Trace: 8 sistem + ≤12 token = **maks 20**, bukan 36.
+
+**5. Fallback slot yang aman.** `_build_token_slot_registry` (`:388-395`) `break` begitu 12 slot terisi, meninggalkan 13 dari 25 token tanpa slot — termasuk ADA, AVAX, LINK yang ada di config default (`core/config.py:202-213`). Fallback render (`:480-491`) lalu memberi mereka `free[0]`, jadi semuanya mendarat di atas DOGE. Ganti:
+```python
+free = [i for i in range(len(TOKEN_SLOTS))
+        if all(TOKEN_SLOTS[i] != tuple(layout[k][:2]) for k in token_layout_keys)]
+if not free:
+    continue
+occupied = [TOKEN_SLOTS[i] for i in range(len(TOKEN_SLOTS)) if i not in free]
+slot_index = max(free, key=lambda i: min(
+    math.dist(TOKEN_SLOTS[i], TOKEN_SLOTS[j]) for j in occupied
+) if occupied else 0.0)
+```
+
+**6. Skala marker & label.**
+```python
+size = 14.0 + float(np.clip(confidence, 0.0, 1.0)) * 6.0   # 14..20, bukan 12..24
+# sistem: CORE 18, lainnya 15
+if pulse is not None:
+    size += float(np.clip(float(pulse), 0.0, 1.0)) * 3.0   # +6.0 -> +3.0
+...
+textfont=dict(size=11, family="'Share Tech Mono', ui-monospace, monospace", color=INK_0)
+```
+Marker tidak pernah lebih kecil dari kata di sebelahnya. Confidence sudah dikodekan di warna label, jadi rentang lebar di size hanya menambah risiko tabrakan.
+
+**7. Hapus `height=` dari semua figure.** `hud_figures.py:52/132/211/698/754/774/800` — `height=260` di `:698` vs div 272px di `hud.py:402` adalah selisih 12px yang disengaja dan留下 strip mati di setiap refresh. Div memiliki tinggi; figure tidak boleh ikut mengklaim. Hapus juga `will-change` implisit apa pun.
+
+**8. Sumbu.** `visible=False, fixedrange=True, constrain` **tidak di-set** dalam bentuk apa pun. `constrain='range'`仍然-And Bonds-memperlebar range itu sendiri. `uirevision="neural-constellation"` dipertahankan (sudah ada, sudah ada test-nya).
+
+**9. Bonus yang berbiaya nol.** `market_store.get_funding` dan `get_open_interest` sudah diambil di `update_callbacks.py:1338-1339` untuk decision tree dan **tidak pernah dirender**. Tambahkan dua text read-out di header panel: `FUNDING 8H` dan `OI`. Dua `Output` baru, nol query baru.
+
+Hasil: 22 node hantu/bertabrakan → ≤18 node · 36 edge → ≤20 · 1607px ruang mati → 0 · 231 pasangan label tumpang tindih → 0.
+
+---
+
+## 8. URUTAN IMPLEMENTASI
+
+**Langkah 0 — guard test DULU, sebelum sentuh layout apa pun.** `tests/test_hud_component_ids.py` baru: render `create_hud_layout()`, jalani pohon komponen, kumpulkan setiap `id`, assert 72 ID dari §2 resolve. Termasuk 6 `hud-tree-node-*` yang dibuat `_tree_node()` via parameter `id=` (regex scan `hud.py` buta ini) dan 19 shim ID di `app.py`. Ini satu-satunya test yang mencegah runtime throw di tick 500ms pertama, dan sekarang tidak ada. **Jalankan, harus hijau sebelum langkah 1.**
+
+**Langkah 1 — `dashboard/layouts/hud_figures.py`.** Urut di dalam file: (a) hapus `height=` di `:52,132,211,698,754,774,800`; (b) hapus loop phantom `:468-474`; (c) ganti `TOKEN_SLOTS`; (d) ganti `NEURAL_SYSTEM_NODES` + `NEURAL_SYSTEM_EDGES`; (e) hapus `AGENT_NODE_METRIC`/FEED entries untuk node yang dihapus; (f) edge bersyarat + hub terdekat + `bow=0.06`; (g) fallback slot farthest; (h) marker 14+6, pulse +3, `textfont.size=11`; (i) equity `fill="tonexty"` + trace baseline + range/dtick/title/anotasi; (j) convergence y-axis `[0,1]` tick `0%/50%/100%` + judul sumbu; (k) palet: `PARCHMENT_BG = "#ece3cb"`, `PARCHMENT_CARD = "#e2d8bd"`, hapus `INK_MUTED`, samakan 4 warna vintage ke token §4. Jalankan test neural — harus hijau kecuali 2 yang disebut langkah 7.
+
+**Langkah 2 — `dashboard/assets/style.css`, tulis ulang penuh.** Blok `:root` (§3, §4, §1 token tinggi/spacing) → reset → container + 12-col grid + span + breakpoint → `.hud-panel`/header/body → topbar/rail/tape → orderbook → positions → scanner → pipeline → equity/logs/kpi → scrollbox → guard `prefers-reduced-motion`. File lama dibuang seluruhnya; tidak ada selector yang diwarisi.
+
+**Langkah 3 — `dashboard/assets/neural_flow.css`, hapus file.** Keduanya sudah tidak dipakai.
+
+**Langkah 4 — `dashboard/layouts/hud.py`, tulis ulang `create_hud_layout()`.** Semua `html.Div` dapat `className` `"p-xxx"`; inline `style` pundi ke kelas. `create_top_bar` → `.p-topbar` (hapus `.bot-brand`, `.badge-black`, `.badge-outline-green`, `.spot-pill`; `LIVE` dapat `pulse-live`). `create_ticker_tape` + `create_footer_ticker` → satu `create_event_tape()` di `.p-tape` dua sel. `create_wallet_pnl_panel` + subtext → `create_account_rail()` di `.p-rail`. `create_mini_price_panel` → `.p-chart` (hapus `style={"padding":"4px"}` dan `style={"height":"140px"}`). `create_positions_panel` → `.p-pos`, `create_scanner_panel` → `.p-scan`, keduanya anak `.p-stack`. `create_decision_tree_panel` → `create_pipeline_strip()` di `.p-pipe`, 13 ID dipertahankan, legenda + rail terpisah dihapus. `create_neural_net_panel` → `.p-neural` dengan `hud-panel-body--flush`. `create_equity_growth_panel` → `.p-equity`, `create_trade_logs_panel` → `.p-logs`, `create_live_analytics_panel` → `.p-kpi` (seed `sharpe`/`mdd` jadi `"N/A"`). `_tree_node()` dan `TREE_STAGES` tetap — keduanya dipakai callback.
+
+**Langkah 5 — `dashboard/callbacks/update_callbacks.py`, empat baris.** (a) `:1156` hapus `marquee_text = base_marquee + " · " + base_marquee`, ganti `marquee_text = base_marquee`; (b) `:1195` `sharpe_val = "0.00"` → `"N/A"`; (c) header neural: dua `Output` baru untuk funding/OI (_opsional, §7.9); (d) tidak ada lagi. Semua 68 `Output()` tetap menunjuk ID yang sama persis.
+
+**Langkah 6 — `dashboard/app.py`, satu baris.** `backgroundColor: "#dfd5b8"` → `"#d9cfb2"`. Shim `display:none` baris 71-91 **tidak disentuh** — 19 ID itu ditulis callback 1-6 dan harus tetap mounted.
+
+**Langkah 7 — `tests/test_neural_net_layout.py`, empat assertion.** (a) `test_each_edge_is_its_own_trace` — `assertGreaterEqual(len(lines), 18)` gagal (sekarang 8 sistem + 3 token = 11). Ubah jadi kontrak eksplisit: `self.assertEqual(len(lines), 8 + n_directional)`. (b) `test_every_dash_pattern_matches_css_keyframe` — hapus blok baca `neural_flow.css` (`:226-229`); pertahankan assertion "semua pola berjumlah 16px". (c) `test_axes_have_no_scaleanchor` **terduplikasi** di `:231` dan `:250` — hapus yang kedua. (d) `test_no_duplicate_coordinates` tetap hijau. `TestTokenSlotStability` dan `TestReservedSymbols` tetap hijau: mereka membandingkan base vs reduced, bukan koordinat absolut. `test_outer_ring_labels_go_below` tetap hijau — ambang `y < -0.34` masih cocok dengan slot baru (`-0.30` → top, `-0.76` → bottom).
+
+**Langkah 8 — lint.** `scripts/lint_assets.py` atau step CI: (a) gagal pada hex di luar `:root`; (b) gagal pada selector `.foo` yang tidak muncul sebagai string `className` di `dashboard/**/*.py`; (c) gagal pada `max-height`, `will-change`, dan `!important`外的 animation-duration selain guard reduced-motion. Tiga aturan ini mencegah seluruh kelas bug di spec ini akumulasi ulang.
+
+**Langkah 9 — verifikasi.** `python -m unittest discover -s tests` → harus **113+** (108 + guard test + 1 lint). Jalankan app, screenshot 1920px dan 1280px, cek: tinggi halaman 816px di 1920; tidak ada satu pun label neural yang tumpang tindih; tidak ada `Margin: NaN`; console browser bersih; tidak ada ID yang hilang (kalau hilang, Dash melempar di tick pertama — guard test sudah menangkapnya duluan).
+
+**Langkah 10 — Fase 2 (terpisah, bukan bagian rewrite ini).** Tambah 3 `Output` (`hud-pos-entry`, `hud-pos-mark`, `hud-pos-roe`) dan ubah `hud-positions-table` jadi 6 kolom `SYM | SIDE·LEV | ENTRY | MARK | uPnL/ROE% | SL`, pakai `entry_price`/`liquidation_price`/`margin` yang sudah ada di `SELECT *`.ajar `position_manager.update_account_stats` agar menulis `sharpe_ratio` dan `max_drawdown`, atau hitung keduanya dari `balance_history.equity` (loop peak-trough sudah ada di `update_callbacks.py:207-212`). Ganti `hud-neural-graph` dengan ticker matrix HTML (`symbol | direction | confidence | Δ60s | agent`) begitu `Output` baru diizinkan — itu lebih ketat per piksel dari graph 18 node.
+
+---
+
+## 9. YANG DI-TOLERANSI
+
+- **Drop VT323 dan parchment → ini perubahan identitas visual, bukan sekadar cleanup.** Ground parchment bertahan, mono bertahan, jadi app masih terbaca sebagai terminal, tapi berhenti jadi properti CRT. Itu memang yang diminta "terlalu banyak gimmick", tapi ini edit netral? Bukan. Trout.
+- **Hapus 12 keyframe menghilangkan satu-satunyaSigns of ambient life.** Yang tersisa: `.pulse-live` di span LIVE topbar. Kalau pipeline perlu terasa hidup, yang benar adalah `transition: border-color .18s` pada `.stage-active`, bukan keyframe.
+- **Zona 3 260px adalah kompromi.** Equity dan log sama-sama mau lebih, dan di 1439px-1023px empat sel jadi 2×2 → halaman ~1280px. Versus 1944px untuk breakpoint sekarang.
+- **Membuang `hud-neural-graph` sepenuhnya butuh `Output` baru** (Output-nya `figure`, bukan children). Di spec ini graph tetap, diperbaiki ukurannya. Fase 2.
+- **SHARPE dan MAX DRAWDOWN tampil `N/A` sampai Fase 2.** `N/A` jujur dan jelas lebih baik dari `0.00` yang aktif salah, tapi `0.00` memang lebih "berisi".
+- **Test neuralnet yang ada harus diubah, bukan dihapus.** Empat assertion, semuanya dikunci di langkah 7. Tidak ada satu pun test yang menyentuh `create_hud_layout`, ID, tinggi, atau range sumbu — jadi rewrite 816px ini secara konstitusi tidak terlindungi, kecuali guard test langkah 0 yang ditambahkan lebih dulu.
+
+===== NEXT CRITIQUE =====
+
+Restored to clean baseline. Full adversarial check complete.
+
+## ADVERSARIAL CHECK — `trading-bot` HUD rebuild spec
+
+### VERDICT: 72-ID count is CORRECT. Everything else in §0/§6 is stale — spec describes a repo that no longer exists.
+
+### 1. BLOCKER — `INK_0` undefined. 16/116 tests hard-fail.
+
+`hud_figures.py` defines `INK_BLACK`, `INK_MUTED`, `GREEN_VINTAGE`, `RED_VINTAGE`, `AMBER_VINTAGE`, `BLUE_VINTAGE`, `PARCHMENT_BG`, `PARCHMENT_CARD`. No `INK_0`. §7.6 writes `color=INK_0`, §0/§4 never define it.
+
+Applied §7 verbatim → `NameError: name 'INK_0' is not defined` → `Ran 116 tests, FAILED (errors=16)`. Every test that builds a neural figure dies at `_fig()`.
+
+### 2. BLOCKER — spec's edge-count arithmetic wrong, and for the wrong reason.
+
+§7 step 7(a) says the test currently sees "8 sistem + 3 token = 11". **It sees 12 system + 0 token.**
+
+Test fixture `test_neural_net_layout.py:32-38` keys `signal_map` as `f"{s}/USDT:USDT"`. `create_neural_net_fig` looks tokens up by **bare** symbol (`signal_map.get(sym)`, `hud_figures.py:522`) → never matches → **0 token edges**. The 12 is 100% system edges, sitting exactly on the `assertGreaterEqual(len(lines), 12)` boundary.
+
+Cut to 8 → produces **8**. Spec's replacement `assertEqual(len(lines), 8 + n_directional)` with `n_directional=3` computes 11 ≠ 8. Fails first run. (Production is unaffected — `update_callbacks.py:934-941` really does key by `base_sym`, so token edges do render live.)
+
+With `INK_0` defined, measured: `FAILED (failures=1)`, only `test_each_edge_is_its_own_trace`. `test_busy_edges_are_dashed_and_splined` survives.
+
+### 3. BLOCKER — §7.5 fallback code raises `TypeError`.
+
+```python
+occupied = [TOKEN_SLOTS[i] for i in range(len(TOKEN_SLOTS)) if i not in free]  # tuples
+slot_index = max(free, key=lambda i: min(
+    math.dist(TOKEN_SLOTS[i], TOKEN_SLOTS[j]) for j in occupied   # j IS a tuple
+) if occupied else 0.0)
+```
+
+`j` iterates coordinate tuples, `TOKEN_SLOTS[j]` indexes by tuple. Executed → `TypeError: list indices must be integers or slices, not tuple`. Needs `math.dist(TOKEN_SLOTS[i], j)`.
+
+### 4. BLOCKER — CSS: 14 IDs are `className` Outputs. Callback destroys layout classes every 500ms.
+
+Spec never mentions this. `update_callbacks.py`:
+
+| id | Output | callback writes |
+|---|---|---|
+| `hud-giant-pnl` | `className` :612 | `f"giant-pnl text-{green\|red}"` :669 |
+| `hud-scanner-consensus` | `className` :779 | `"odds-consensus-badge stance-*"` :853-859 |
+| 6 × `hud-tree-node-*` | `className` :1334-39 | **full replacement** `"tree-step-node tone-X stage-Y"` :1447-1461 |
+| 5 × `hud-tree-arrow-*` | `className` :1340-44 | `"tree-arrow arrow-done/pending"` |
+| `hud-tree-flow-rail-fill` | `className` + `style` :1345-46 | `"tree-rail-fill rail-halt/rail-complete"` |
+
+Dash `className` Output **replaces** the whole attribute. So §3's "pindahkan semua `fontSize` inline ke kelas" is unbuildable for these 14 IDs — any layout-added class is stripped on the first 500ms tick. Concretely: if `.hud-panel-body`/`flex:1`/`.p-pipe > *` is implemented as a class on the tree nodes, the pipeline strip collapses every tick. Tree-node typography must stay inline (as `animationDelay` already does at `hud.py:311`) or be added to the callback's class list — which is a 5th callback edit §8 doesn't list.
+
+### 5. MAJOR — §2 removes classes that are the *only* class on 13 IDs, assigns no replacement.
+
+§6 deletes these; §2/§3/§5 define nothing to take over:
+
+| id | class deleted by §6 | replacement in spec? |
+|---|---|---|
+| `hud-chart-price-display` | `header-tag` | none — §2 says needs `--up`/`--down` |
+| `hud-realized-tag` | `header-tag` | none — same |
+| `hud-positions-count-badge` | `header-tag` | none |
+| `hud-tree-stage-tag` | `header-tag` | none |
+| `hud-scanner-long-odds` | `odds-val-long` | none |
+| `hud-scanner-short-odds` | `odds-val-short` | none |
+| `hud-wallet-sub` | `wallet-subtext` | none |
+| `hud-stat-balance` / `-equity` / `-winrate` | `stat-val` | none |
+| `hud-scanner-agent-strip` | `agent-strip` | none |
+| `hud-live-ticker-text` | `ticker-marquee-content` | none (only `giant-pnl` is covered) |
+
+IDs survive; **all styling on them vanishes**. `header-tag` is the worst — 4 IDs, deleted, never redefined.
+
+### 6. MAJOR — §8 step-8 lint rule (b) fails on 12 "WAJIB DIPERTAHANKAN" classes.
+
+Rule as written = "selector `.foo` must appear as a `className` string in `dashboard/**/*.py`". These are emitted **only inside f-strings / larger literals**, never as a bare quoted token:
+
+`abstained`, `arrow-done`, `arrow-pending`, `badge-red`, `bid`, `ob-bar-ask`, `ob-bar-bid`, `rail-complete`, `rail-halt`, `stance-long`, `stance-neutral`, `stance-short`
+
+A naive `"foo" in source` check rejects all 12 — the exact classes §6 says are load-bearing. Lint must tokenize class strings, not substring-match.
+
+### 7. MAJOR — spec's three `:root` blocks break the **existing** `test_no_hex_literals_outside_root`.
+
+`tests/test_layout_contract.py:126` does `css.split("}", 1)[0]` — only the **first** `:root`. §1/§3/§4 write three separate `:root` blocks. Simulated:
+
+```
+hex flagged 'outside :root': ['#0a5e2d', '#a01519', '#d9cfb2', '#ece3cb']
+-> test_no_hex_literals_outside_root FAILS: True
+```
+
+Must be **one** `:root`.
+
+### 8. MAJOR — step 0 is redundant; the guard test already exists.
+
+`tests/test_layout_contract.py` — 7 tests, incl. `test_every_callback_output_id_is_mounted` (walks the real Dash tree, catches the 6 `_tree_node` IDs that regex misses — exactly the gap §0 describes) and `test_no_duplicate_component_ids`. Merge into that file, don't create `test_hud_component_ids.py`.
+
+### 9. Baseline numbers wrong.
+
+| spec says | actual |
+|---|---|
+| 108 tests | **116** (`Ran 116 tests ... OK`) |
+| → 113+ after | 116 + 0 (guard exists) |
+| 68 `Output` → 65 ID | ✅ correct |
+| 72 total ID | ✅ correct (50 runtime + 22 `app.py`) |
+| §0 "74? Não" | correctly self-resolves to 72 ✅ |
+
+### 10. §0/§6 stale premises — all already fixed upstream.
+
+| claim | reality |
+|---|---|
+| `body::after` CRT scanline, `style.css:48-58` | **absent** from both CSS files |
+| 11 `will-change` declarations | **0** in `style.css`, **0** in `neural_flow.css` |
+| VT323 + `--font-pixel` force 52px hero | **neither exists**; hero is plain `.giant-pnl{font-size:52px}` `style.css:383` |
+| `text-muted` "tidak ada di CSS" | **already defined** `style.css:937` |
+| `:1156 marquee_text = base + " · " + base` | **already** `marquee_text = base_marquee` (now :1162) |
+| `:1195 sharpe_val = "0.00"` | **already** `sharpe_val = "N/A"` (now :1204, with rationale at :1280); `mdd_val` already `if mdd else "N/A"` |
+| `fill="tozeroy"` forces 0 into y-domain | **already** baseline-trace + `fill="tonexty"` `hud_figures.py:766-783` |
+| 12 keyframes to delete | 3 in `style.css` (`hud-pulse-live`, `hud-stage-active`, `hud-stage-halt`) + 2 in `neural_flow.css` = 5 |
+
+So steps 5(a), 5(b), 6 (CRT/`will-change`/VT323/marquee/12-keyframes) are **no-ops or wrong-target**. §7 step 1(i)'s `tonexty` half is done; only the `add_hline` `:785` → real trace is real (hlines are layout shapes, can't anchor `tonexty`).
+
+### 11. §7.9 FUNDING/OI breaks the 72 contract.
+
+Two new `Output` ⇒ 2 new component IDs ⇒ **74**. Step 0's guard test asserts 72 → fails. And "nol query baru" is wrong: `market_store.get_funding` / `get_open_interest` are at `:1338-1339` inside **`update_decision_tree_flow`**, not `update_neural_net`. Surfacing them in the neural header needs new calls there, or the `Output` must move to the tree callback.
+
+### 12. §2 positions grid unbuildable as written.
+
+"`positions-grid-table` jadi `display:grid` 4 kolom `1.1fr .9fr 1fr 1fr`, header 20px + 3 baris × 26px". But `Output("hud-positions-table","children")` emits whole-row `html.Div(className="position-compact-row")` divs (`hud.py:223`, callback :701). As grid **items**, 3 rows land in a 4-col grid as 3 cells of row 1 — not 3 stacked rows. Needs `grid-column: 1/-1` + inner grid, or the callback emits 4 spans. §8 says the callback changes are only 4 lines and none touch positions. (§3C trade-log 5-col grid is fine — 5 `html.Span` siblings, `:1109-1114`.)
+
+### 13. What the spec gets right (verified).
+
+- **72-ID accounting** — every one of the 50 `hud.py` + 22 `app.py` IDs is placed in exactly one §2 table; no unaccounted ID, no ID claimed-but-unplaced. All 65 `Output` + all `Input`/`State` IDs mount.
+- **New `TOKEN_SLOTS`** — registry still covers all 12 `FULL_TOKENS`, zero duplicate coords, `test_outer_ring_labels_go_below` (`y < -0.34 → bottom center`) still passes on `-0.30`/`-0.76`.
+- **Column pitch @1920** — `(1904-66)/12 = 153.17`, `×8 = 1267.4`, `×4 = 630.7`, `×3 = 471.5` ✅
+- `.p-stack` math — 138 + 6 + 212 = 356 ✅; page 816px ✅
+- `max_open_positions=3` (`core/config.py:24`) ✅; 13 universe tokens unregistered incl. ADA/AVAX/LINK (`core/config.py:202-213`) ✅
+- `update_account_stats` `is not None` guards (`database/repository.py:362-367`) ✅
+- `test_layout_contract` ≤4 keyframes / no-`will-change` / reduced-motion — §5 satisfies ✅
+
+### Minimal fix list before implement
+
+1. Define `INK_0` in `hud_figures.py`, or use `INK_BLACK`.
+2. Rewrite `§8 step 7(a)` to `assertEqual(len(lines), 8)` — the fixture's suffixed keys make `n_directional` always 0.
+3. Fix §7.5: `math.dist(TOKEN_SLOTS[i], j)`.
+4. Add a §2 rule: the 14 `className`-Output IDs may not receive layout-only classes.
+5. Merge `:root` into one block.
+6. Drop steps 5(a)/5(b) and the CRT/`will-change`/VT323/marquee/12-keyframe rows in §6.
+7. Recount target: 116, not 113+.
+8. Merge step 0 into `tests/test_layout_contract.py`; make lint rule (b) tokenize class strings.
+9. Either drop §7.9 or budget 74 IDs + 2 extra `market_store` calls.
+
+===== NEXT CRITIQUE =====
+
+I read all six target files plus the tests, rendered the real layout in headless Chrome, and audited every factual claim the spec makes. Read-only, no project file modified.
+
+## THE SPEC IS AIMING AT THE WRONG DISEASE
+
+The spec's entire "gimmick overload" premise is **already fixed or never existed**. It lists removals for code that is not there. Verified against current bytes:
+
+| Spec §6 claim | Reality |
+|---|---|
+| `body::after` CRT scanline, z-9999, opacity 0.85 | **absent** — 0 hits, both CSS files |
+| `marqueeScroll` keyframe + `text + text` | **absent** — 0 keyframes by that name |
+| 11 `will-change` declarations | **0 total** |
+| VT323 + `--font-pixel` forcing 52px hero | **0**; hero is 52px because `.giant-pnl` *explicitly says* `font-size:52px` |
+| 4 hard-shadow recipes (`2px 2px 0`, glow) | **0 `box-shadow:`**; 1 `text-shadow`, and it computes to `none` |
+| `--green-neon #009933` 2.72:1, `--amber-warning`, `--red-alert` | **0** — those token names do not exist |
+| `max-width:100vw` + `overflow-x:hidden` causing the horizontal-overflow bug | **`max-width:100vw` is gone**; `overflow-x:hidden` is on `html,body` (line 103) not "removed" |
+| style.css has "0 `prefers-reduced-motion` blocks" | **present**, line 948 |
+| `hud_figures.py:52/132/211/698/754/774/800` all set `height=` | **no `height=` anywhere in the file** — `figh=None` on all three figures I instantiated. Step 1(a) is 7 edits to nothing. |
+| `update_callbacks.py:1156` duplicates `base + " · " + base` | **already fixed**, line 1162 `marquee_text = base_marquee` |
+| `.text-muted` "must be created, doesn't exist" | **exists**, line 930 |
+| 68 Outputs → 65 unique IDs, plus tree = 71, reconcile to **72** | 65 unique confirmed; union(hud.py ∪ app.py) = **72** confirmed. The 12-column grid, height contract, 12-col spans, and §9 tolerances are the strongest part of the document and survive. |
+
+Real inventory is 3 keyframes in style.css (`hud-pulse-live`, `hud-stage-active`, `hud-stage-halt`) + 2 in neural_flow.css. `arrowPulse` and `nodeIdleBreath` **do not exist** — deleting them is a no-op. The spec is auditing a git revision older than the working tree. 125 tests currently pass, not 108.
+
+## THE ACTUAL ROOT CAUSE, AND IT MAKES THE SPEC'S ~1/3 OF THE PAGE INVISIBLE
+
+`dashboard/assets/style.css` lines 29-38 and 72-84 define 19 custom properties as references to themselves:
+
+```css
+--bg-app: var(--bg-app);
+--bg-card: var(--bg-card);
+--fg: var(--fg);
+--pos-wash: var(--pos-wash);
+--line: var(--fg);
+```
+
+A cyclic `var()` is invalid at computed-value time. I confirmed the actual browser behavior rather than trusting the spec:
+
+```
+:root{ --bg-app: var(--bg-app); --fg: var(--fg); --pos: #006a2b; --line: var(--fg); }
+.probe{ background-color: var(--bg-app); color: var(--pos); border: 2px solid var(--line); }
+```
+→ Chrome returns `backgroundColor=rgba(0, 0, 0, 0)`, `borderTopColor=rgb(0, 106, 43)`.
+
+**Every panel, header, topbar, footer, ticker tape, orderbook rule, tree rail, log stream and log chip in this app currently renders with no background and no borders.** 80 declarations across 8 properties are neutralized: `background` ×31, `color` ×20, `border` ×13, `border-top` ×4, `border-bottom` ×4, `background-color` ×3, `border-color` ×3, `text-shadow` ×1. Only 37 of 56 tokens resolve; `--pos/--neg/--warn/--accent/--fg-dim` and the whole spacing/height scale survive.
+
+I rendered `create_hud_layout()` with the real stylesheet at 1920px. The screenshot shows the terminal as undifferentiated beige with no panel chrome whatsoever. Measured:
+
+```
+.hud-panel        backgroundColor=rgba(0,0,0,0)  borderTopWidth=0px
+.hud-panel-header backgroundColor=rgba(0,0,0,0)  color=rgb(255,255,255)  borderBottomWidth=0px
+.hud-footer       backgroundColor=rgba(0,0,0,0)  color=rgb(0,0,0)
+.hud-live-ticker-tape  backgroundColor=rgba(0,0,0,0)  borderTopWidth=0px
+.orderbook-tape   borderTopWidth=0px
+.tree-flow-rail   backgroundColor=rgba(0,0,0,0)
+.trade-log-stream backgroundColor=rgba(0,0,0,0)  borderTopWidth=0px
+.giant-pnl        textShadow=none
+```
+
+`.hud-panel-header` is `color:#fff` on `background:transparent` over `#dfd5b8` — **2.1:1**, invisible, and the reason the panel titles read as floating text. This is why the layout "looks weird": the grid is fine (measured spans are exact — `.zone2-price` x=10 w=1253, stack x=1269, zone3 cells at 466px each, all aligned), but every panel boundary is missing so alignment cannot be seen. The spec's screenshot-derived complaint "grid looks misregistered" is a *symptom* of absent borders, not of grid bugs.
+
+Critically: **the spec's §4 replacement palette repairs this by accident.** Its `--bg-panel`/`--ink-0`/etc. are concrete hex values with no `var()` reference, so a full `:root` rewrite fixes it. But the spec never identifies the cause, so §6's removal list and §8's step ordering are aimed at absent code, and nothing in the document adds a regression guard for it. `tests/test_layout_contract.py::test_no_hex_literals_outside_root` enforces the *convention* that produced it.
+
+**Add a guard first**, before any rewrite: parse `:root`, resolve each `var()` chain, fail on any cycle. That is a five-line test and it catches the entire class.
+
+## THE NEURAL-NET KEY MISMATCH — LIVE BUG, NOT IN THE SPEC
+
+The spec attacks the constellation for geometry ("1607px of dead space", "231 overlapping label pairs"). The panel is already `span-3` and 471px — defect #1 in the brief is **already fixed**. What is actually broken is a key-type bug, and it is not in the spec at all:
+
+```python
+# update_callbacks.py:939 — signal_map keyed by BASE symbol
+signal_map[base_sym] = {...}          # "BTC"
+
+# hud_figures.py:522 — lookup by BASE symbol too, so that path is fine
+sig = signal_map.get(sym)
+
+# hud_figures.py:495 — lookup by FULL symbol, always None
+ch = signal_map[dst].get("price_change")
+```
+
+`edge_flow` never finds a price change, so every token edge falls back to `activity_map`/`flow_map` and renders as an `idle` line. Measured with the exact production key shape: 3 tokens with LONG/SHORT direction produce **11 line traces — zero token edges**. The flow encoding the panel is built to show is dead on every frame.
+
+Worse, §7.4 makes it worse: it adds `sig["direction"]` gating to that same loop. Because `signal_map.get(sym)` uses base keys and works, gating is correct — but §7.4's hub-rewiring and `bow = 0.06` are computed against the spec's new `NEURAL_SYSTEM_NODES` coordinates. The spec's own trace math is self-inconsistent:
+
+- §7.3 removes `MACRO_FRED`, `BINANCE_FEED`, `YF_FALLBACK`, `COINGECKO` from `NEURAL_SYSTEM_NODES`.
+- §7.4 says hub choice is `nearest` of `{CORE_ENGINE, DECISION_GATE, EXECUTION_AGENT}` — all three survive. OK.
+- But `AGENT_NODE_METRIC` and `FEED_NODE_CHANNEL` still map `MACRO_FRED`/`BINANCE_FEED`/`YF_FALLBACK`/`COINGECKO`. `edge_flow` walks `AGENT_NODE_METRIC.get(src)` and `FEED_NODE_CHANNEL.get(node)` for edge endpoints. Step 1(e) says to remove those entries, but `NEURAL_SYSTEM_EDGES` in the spec's §7.3 drops `MACRO_FRED→SENTIMENT`, `BINANCE_FEED→YF_FALLBACK`, `YF_FALLBACK→COINGECKO` — consistent. **However** `edge_flow` is also the only path that produces `flow > 0`, and with 4 feed nodes gone, `flow_map`'s 4 channels (`allMids`, `l2Book`, `candle`, `trades`) lose 2 of their 4 producers. `binance_placeholder` normalization in `update_neural_net` divides by `peak` over remaining channels — the normalization changes meaning silently, and the spec never mentions `flow_map` at all.
+
+§7 also states 22 markers → ≤18 and 36 edges → ≤20. Current: `signal_map={}` gives 10 nodes / 12 lines; 12 base-key tokens gives 18 nodes / 20 lines. The "22 markers with `signal_map={}`" figure in §0/§7.1 is **not reproducible** — the phantom-fill loop it targets is already gone, replaced by `display_tokens = [t for t in active_tokens][:len(TOKEN_SLOTS)]` at line 470. §7.1 is another edit to deleted code.
+
+## STRUCTURAL TRAPS THE SPEC MISSES
+
+**1. `className` Outputs destroy layout classes.** 15 Outputs write `className` directly. `hud-giant-pnl`'s callback (line 667) returns `"giant-pnl text-green"` — hardcoded. The spec §2 keeps `hud-giant-pnl` but §3 shrinks the hero to 30px via a CSS class while §6 lists `giant-pnl` as a class to be *removed*. If `giant-pnl` leaves CSS, the 500ms callback keeps writing the class name and the element falls back to `--fs-3` 12px. Same trap for `hud-scanner-consensus` (line 779 writes `"odds-consensus-badge stance-long"`) and all 6 tree nodes + 5 arrows + rail (lines 1334-1346, which emit `tree-step-node tone-blue stage-done` etc. as literal strings). The spec's §2 table correctly keeps 13 tree IDs "resolvable" but never notes that **their styling depends on callback-authored class names that the spec's CSS rewrite must keep in exact syntactic form**. `test_layout_contract.py` does not cover this — it checks IDs, not emitted class strings.
+
+**2. `hud-tree-flow-rail-fill` has both a `className` Output and a `style` Output.** The spec §3A folds the rail into the 44px strip as an "underline 2px at the band base". But the callback writes `{"width": f"{rail_pct:.1f}%"}` as an inline style every 500ms, and `--gutter` is 6px. Any layout that assumes the rail is decorative will fight the inline width. Worse: `style` Output **replaces the entire style dict**, so if the spec adds `height`/`background` to that div inline in `hud.py`, the callback destroys it on the first tick. This is the sharpest trap in the codebase and the spec never mentions it.
+
+**3. `align-items: start` breaks the spec's own `.p-stack` flex math.** §1 sets `align-items: start` on the container (correct, and it does fix the 40% wallet gap — measured `.wallet-box-content` is 32px tall with `scrollHeight=148`, i.e. **116px of content clipped by `overflow:hidden` today**). But `.p-stack` children then need `flex: 0 0 138px` / `flex: 1 1 auto` to fill 356px. If a child ever wraps or the scanner's content exceeds 181px, the `min-height:0` stack lets the *inner* `.hud-panel-body` overflow instead of growing the row, because `align-items:start` means the grid row height is set by the tallest item and `.p-stack` has no `height` guarantee of its own outside the 356px token. The spec's arithmetic is right but has no fallback: there is no `overflow` rule specified for what happens when the agent strip wraps to 2 lines at 630px width.
+
+**4. Height arithmetic is off where the spec claims it is exact.** §2 Z2A: "body = 326px: 179 chart + 4 gap + 143 tape". `.hud-panel-body` is `flex:1 1 auto` with `padding: var(--pad-body)` = 4px, so its content box is `356 - 1px header - 1px border - 8px padding = 346px`, not 326px. The `--h-chart` 179 + `--h-tape-ob` 143 = 322 leaves 24px of dead space in the orderbook panel, and `.orderbook-tape` has `margin-top:4px; padding-top:4px` plus `border-top:1px` = 9px more, so `flex:1 1 0` rows will be 11.6px not the specified 13px. The spec explicitly says 11 rows × 13px = 143px exact. It won't be.
+
+Same for Z1B rail: "4 pad + 11 label + 30 nilai + 13 sub + 4 pad = 62". But `.wallet-rail .hud-panel-body` has `padding: var(--sp-2) var(--sp-4)` = 4px/12px, and the body also holds `hud-giant-pnl` at 30px with `line-height` from `body{line-height:1.25}` → 37.5px, not 30. `--fs-5:30px` × 1.25 = 37.5. Rail content = 11 + 37.5 + 13 + 8 = 69.5 > 62. Overflows by 7.5px. The spec's own §1 rule `line-height:1.2` gives 36px → still over.
+
+**5. Grid-3-col zone is not `span 3` in the current file.** §2 says Z3B-E are `span 3`; that matches `hud.py`. But §1's pitch math ("container 1904 - 11×6 = 1838 / 12 = 153.17") is wrong by one: 11 gutters between 12 tracks = 66px, 1904-66 = 1838. ✓. But `.hud-container` is currently `max-width:100vw; padding:6px 10px` and the spec switches to `padding: var(--s-3)` = 8px, changing the content width from 1877 to 1904. Every width number in the spec (1267.36, 630.68, 471.50) is computed from 1904, and I measured the current 1877. The spec's numbers describe a container that only exists after the change — fine as a target, but its `816px` page-height total omits the container's own 2×8 padding from the sum it itemizes. 28+62+20+356+44+260 = 770, + 5 gutters ×6 = 30 → 800, + 16 padding = 816. The arithmetic holds only if `--gutter` row-gap is applied between all 6 rows, which it is. OK — this one is actually right.
+
+**6. `@media (max-width: 767px) { .hud-container { min-width: 720px; } }` reintroduces the exact bug §6 removes.** The spec deletes `max-width:100vw` + `overflow-x:hidden` because "content gets clipped and unreachable", then adds `min-width:720px` on a viewport that may be 400px. With no `overflow-x:auto` on any ancestor, that is horizontal overflow the user cannot scroll to — because `html,body` no longer has `overflow-x:hidden`, the *document* scrolls, which is acceptable, but `.hud-panel{overflow:hidden}` still clips inside panels. The intent (scroll, don't clip) is right; the mechanism needs `overflow-x:auto` on a real scroll container, not `min-width` on the grid.
+
+**7. Test §7 changes will fail for a reason the spec doesn't state.** `test_each_edge_is_its_own_trace` currently asserts `>= 12` and passes at 12 system edges. The spec's new `NEURAL_SYSTEM_EDGES` has 8, so `8 + n_directional` with 3 directional tokens = 11 < 12. Fine. But `TestNodeLabels::test_outer_ring_labels_go_below` asserts `pos == "bottom center" if y < -0.34 else "top center"` for all `FULL_TOKENS`. The spec's new `TOKEN_SLOTS` are at y = **-0.30 and -0.76**. -0.30 is not `< -0.34`, so the top row gets `top center` — which the spec intends. But the *test* computes expectation from the same threshold, so it still passes. The spec claims this test "stays green" — correct, but for the wrong reason: it tests the threshold, not the layout. It's a tautology that would pass against any slot table. Same for `test_no_duplicate_coordinates`, which only checks the coords are distinct — it would pass with all 12 tokens on one row. The spec treats these as protection; they are not.
+
+**8. `.hud-panel-body{overflow: visible}` in §5 is a regression.** Measured: `.wallet-box-content` has `scrollHeight=148` in a `32px` box, i.e. content already overflows by 4.6×. `overflow:visible` lets that spill **outside the panel** and overlap whatever is below it. The spec removes `overflow:hidden` on the theory that "content should lay out honestly" — but the real fix is the height contract, and until the rail's own arithmetic is corrected (see #4) switching to `visible` converts a clipped panel into a colliding one. `.hud-panel{overflow:hidden}` (kept in §5) will still clip at the panel edge, so the net effect is clipping at a *different* boundary with worse text.
+
+## WHAT I WOULD ACTUALLY DO, IN ORDER
+
+1. **Fix the 19 cyclic tokens.** This is the whole visual bug. It is ~19 lines and makes panels visible. Do this before any layout work; the spec's §4 rewrite does it implicitly but for the wrong reason.
+2. **Add a cycle-resolution guard test** plus a test that asserts `.hud-panel` and `.hud-panel-header` have non-transparent `background-color` — the exact assertion that would have caught this.
+3. **Fix `edge_flow`'s `signal_map[dst]` → `signal_map[base(dst)]`.** Restores token-edge flow coloring, which is the panel's only reason to exist. One line.
+4. **Add a test that the 15 `className`-writing callbacks emit class names that exist in the stylesheet.** This is the coupling the spec misses entirely and the likeliest source of a silent regression in the rewrite.
+5. Only then do the grid/height work, and **measure each panel's real content height** rather than asserting sums — the spec's sums are off by 8-24px per panel.
+6. Drop every §6 deletion for code that isn't there. The list is not harmless: it will send an implementer hunting for a CRT overlay, 11 `will-change` declarations, and VT323 that do not exist, burning the budget and eroding trust in the rest of the document.
+
+Bottom line: the spec's structural analysis (12-col grid, height contract, single `--pad-body`, `align-items:start` for the wallet gap, `tonexty` equity baseline, 72-ID reconciliation, the test-guard-first instinct) is good work. Its diagnostic layer is wrong — it was written against a stale tree, misses the one bug that actually explains the screenshot, and misses the `className`/`style` Output coupling that will break the rewrite. The 12-column grid is currently working correctly; the borders are not.
+
+Caveat on state: `dashboard/assets/style.css` and `hud.py` were being modified by another process while I worked (style.css went 26.3K → 30.7K → 31.1K during the session; test count went 108 → 116 → 125). Every claim above is scoped to the bytes I verified, and the cyclic-token finding was re-confirmed twice against the current file.

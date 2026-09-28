@@ -1,0 +1,89 @@
+/*
+ * neural_flow.css — Arus data mengalir pada graf "Snipe Neural Net".
+ *
+ * Kenapa CSS dan bukan Plotly.animate / dash-cytoscape / force-graph:
+ *   - Plotly menggambar tiap garis `mode="lines"` sebagai
+ *     `<path class="js-line">` di dalam `<g class="scatterlayer">`.
+ *   - CSS bersifat DEKLARATIF, jadi animasi di sini otomatis berlaku lagi
+ *     pada setiap path yang dibuat Plotly — termasuk setelah redraw 500ms.
+ *     Tidak ada listener, tidak ada MutationObserver, tidak ada JS.
+ *   - Nol biaya server: callback tetap mengirim figure biasa; browser yang
+ *     menjalankan animasi di refresh rate sendiri.
+ *
+ * PEMisahan tugas antara Python dan CSS ini disengaja:
+ *   - Python menaruh POLA dash (`dash="9px,7px"`) di inline style Plotly.
+ *   - CSS hanya menggeser OFFSET-nya.
+ *
+ * Penting: sisi yang sepi memakai garis solid (tanpa pola dash). Menggeser
+ * `stroke-dashoffset` pada garis solid adalah no-op visual, jadi selector di
+ * bawah bisa berlaku ke SELURUH garis tanpa perlu membedakan busy vs idle
+ * lewat kelas — yang memang tidak tersedia, karena Plotly hanya memberi
+ * class `trace scatter trace<uid>`, bukan `legendgroup`.
+ */
+
+#hud-neural-graph .scatterlayer .trace path.js-line {
+    /*
+     * Hanya menggeser offset — TIDAK mengatur dasharray. Pola dash berasal
+     * dari inline style Plotly (lihat `dash="9px,7px"` di
+     * `create_neural_net_fig`). Sisi yang solid tidak punya pola, jadi
+     * offset di sana tidak terlihat dan tidak ikut bergerak.
+     */
+    animation: neural-edge-flow 1.2s linear infinite;
+}
+
+/*
+/*
+ * Catatan: tidak ada stagger per-sisi di sini.
+ *
+ * Versi sebelumnya memakai `:nth-child(6n+1..6)` untuk memberi fase
+ * tertunda berbeda pada tiap sisi. Itu TIDAK PERNAH AKTIF: setiap sisi
+ * digambar sebagai trace sendiri, jadi tiap `<g class="trace">` memuat
+ * tepat satu `<path class="js-line">`. Jadi selalu `:nth-child(1)`,
+ * sehingga hanya aturan `6n+1` yang cocok dan semua sisi berdenyut
+ * serentak — persis yang tidak diinginkan.
+ *
+ * Stagger yang benar membutuhkan selector berdasarkan indeks trace, yang
+ * tidak tersedia di CSS. Alternatifnya phase acak per-sisi dari Python
+ * (lihat `phase` di `create_neural_net_fig`).
+ */
+
+@keyframes neural-edge-flow {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: -16px; }
+}
+
+/* --- Denyut simpul ------------------------------------------------- */
+
+/*
+ * Marker token dan agen ada di satu trace `markers+text`; tiap lingkaran
+ * adalah elemen `path.point`.
+ *
+ * PENTING: JANGAN pernah menganimasikan `transform` di sini. Plotly
+ * memposisikan tiap marker dengan atribut SVG `transform="translate(x,y)"`.
+ * Atribut CSS `transform` menimpa atribut itu, sehingga seluruh marker
+ * akan ditumpuk ke titik origin graf. Karena itu animasi di sini hanya
+ * menyentuh `opacity` dan `stroke-opacity` — tidak pernah `transform`.
+ */
+#hud-neural-graph .scatterlayer .trace path.point {
+    animation: neural-node-breathe 3.4s ease-in-out infinite;
+}
+
+@keyframes neural-node-breathe {
+    0%, 100% { opacity: 1;   stroke-opacity: 1; }
+    50%      { opacity: 0.78; stroke-opacity: 0.7; }
+}
+
+/* --- Aksesibilitas -------------------------------------------------- */
+
+/*
+ * Menghormati preferensi sistem. Animasi konstan pada puluhan garis adalah
+ * gangguan nyata bagi pengguna yang sensitif terhadap gerak — dan tidak ada
+ * informasi yang hilang saat dimatikan: ketebalan dan warna garis sudah
+ * menencode level flow.
+ */
+@media (prefers-reduced-motion: reduce) {
+    #hud-neural-graph .scatterlayer .trace path.js-line,
+    #hud-neural-graph .scatterlayer .trace path.point {
+        animation: none !important;
+    }
+}

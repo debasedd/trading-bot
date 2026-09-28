@@ -1,0 +1,235 @@
+{
+  "plot": {
+    "x": 14,
+    "y": 32,
+    "w": 462.5,
+    "h": 230
+  },
+  "margins": {
+    "l": 14,
+    "r": 14,
+    "t": 10,
+    "b": 16
+  },
+  "plot_area": [
+    434.5,
+    204
+  ],
+  "px_per_unit": [
+    19.75,
+    17.73913043478261
+  ],
+  "worst_label": [
+    [
+      31.580001831054688,
+      "BTC",
+      "BNB"
+    ],
+    [
+      31.580001831054688,
+      "DOGE",
+      "XPL"
+    ],
+    [
+      31.580001831054688,
+      "ETH",
+      "HYPE"
+    ],
+    [
+      31.580001831054688,
+      "SOL",
+      "ONDO"
+    ],
+    [
+      31.580001831054688,
+      "XRP",
+      "NEAR"
+    ],
+    [
+      31.580001831054688,
+      "ZEC",
+      "ENA"
+    ],
+    [
+      41.845001220703125,
+      "RISK",
+      "TECH"
+    ],
+    [
+      42.970001220703125,
+      "RF ML",
+      "EXEC"
+    ],
+    [
+      42.970001220703125,
+      "SENT",
+      "YFI"
+    ],
+    [
+      43.345001220703125,
+      "SIGNAL",
+      "MACRO"
+    ]
+  ],
+  "worst_marker": [
+    [
+      22.179977416992188,
+      "ETH",
+      "HYPE"
+    ],
+    [
+      22.179977416992188,
+      "ZEC",
+      "ENA"
+    ],
+    [
+      22.18000030517578,
+      "DOGE",
+      "XPL"
+    ],
+    [
+      22.180007934570312,
+      "BTC",
+      "BNB"
+    ],
+    [
+      22.180007934570312,
+      "SOL",
+      "ONDO"
+    ],
+    [
+      22.180007934570312,
+      "XRP",
+      "NEAR"
+    ],
+    [
+      34.00998878479004,
+      "MACRO",
+      "DOGE"
+    ],
+    [
+      34.00999450683594,
+      "TECH",
+      "XRP"
+    ],
+    [
+      34.32000160217285,
+      "SIGNAL",
+      "MACRO"
+    ],
+    [
+      34.6099967956543,
+      "EXEC",
+      "BNB"
+    ]
+  ],
+  "label_violations": 0,
+  "marker_violations": 0,
+  "edges": [
+    {
+      "src": "CORE_ENGINE",
+      "dst": "DECISION_GATE",
+      "len": 79.24259948730469
+    },
+    {
+      "src": "DECISION_GATE",
+      "dst": "RF_MODEL",
+      "len": 79.24261474609375
+    },
+    {
+      "src": "RF_MODEL",
+      "dst": "SENTIMENT",
+      "len": 79.24263000488281
+    },
+    {
+      "src": "SENTIMENT",
+      "dst": "BINANCE_FEED",
+      "len": 79.24260711669922
+    },
+    {
+      "src": "CORE_ENGINE",
+      "dst": "MACRO_FRED",
+      "len": 53.220001220703125
+    },
+    {
+      "src": "MACRO_FRED",
+      "dst": "TECH_TA",
+      "len": 79.24356842041016
+    },
+    {
+      "src": "TECH_TA",
+      "dst": "EXECUTION_AGENT",
+      "len": 79.24356842041016
+    },
+    {
+      "src": "EXECUTION_AGENT",
+      "dst": "YF_FALLBACK",
+      "len": 79.24359893798828
+    },
+    {
+      "src": "YF_FALLBACK",
+      "dst": "COINGECKO",
+      "len": 79.24363708496094
+    },
+    {
+      "src": "EXECUTION_AGENT",
+      "dst": "BTC",
+      "len": 97.37268829345703
+    },
+    {
+      "src": "COINGECKO",
+      "dst": "ETH",
+      "len": 62.072357177734375
+    },
+    {
+      "src": "YF_FALLBACK",
+      "dst": "SOL",
+      "len": 98.9715347290039
+    },
+    {
+      "src": "TECH_TA",
+      "dst": "XRP",
+      "len": 53.95272445678711
+    },
+    {
+      "src": "EXECUTION_AGENT",
+      "dst": "BNB",
+      "len": 55.67156219482422
+    },
+    {
+      "src": "MACRO_FRED",
+      "dst": "DOGE",
+      "len": 53.209991455078125
+    },
+    {
+      "src": "TECH_TA",
+      "dst": "NEAR",
+      "len": 96.3998031616211
+    },
+    {
+      "src": "COINGECKO",
+      "dst": "HYPE",
+      "len": 101.16828155517578
+    },
+    {
+      "src": "COINGECKO",
+      "dst": "ZEC",
+      "len": 103.92107391357422
+    },
+    {
+      "src": "YF_FALLBACK",
+      "dst": "ONDO",
+      "len": 58.423927307128906
+    },
+    {
+      "src": "COINGECKO",
+      "dst": "ENA",
+      "len": 66.4634780883789
+    },
+    {
+      "src": "MACRO_FRED",
+      "dst": "XPL",
+      "len": 95.78999328613281
+    }
+  ]
+}
