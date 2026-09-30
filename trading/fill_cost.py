@@ -35,6 +35,7 @@ Aturan yang berlaku di sini, dan tidak boleh dilanggar di tempat lain:
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, Optional, Tuple
 
 from core.market_store import market_store
@@ -202,6 +203,129 @@ def close_fill_price(
         config=config,
         max_book_age_seconds=max_book_age_seconds,
     )
+
+
+#: Periode funding Hyperliquid, dalam detik.
+#:
+#: config.yaml menulis `funding_rate: 28800` dengan komentar "8 jam".
+#: Itu salah: Hyperliquid melakukan settlement funding setiap JAM, bukan
+#: 8 jam seperti Binance. Salah periode membagi biaya funding dengan 8,
+#: jadi bot melihat biaya delapan kali lebih murah dari kenyataan.
+#:
+#: Nilainya bukan di config karena `agent_intervals.funding_rate` mengatur
+#: SEBERAPA SERING rate-nya di-refresh, bukan periode settlement-nya. Dua
+#: hal berbeda yang kebetulan sama-sama disebut "funding rate".
+FUNDING_PERIOD_SECONDS = 3600.0
+
+#: Lantai untuk rate funding, sebagai fraksi per periode.
+#:
+#: Rate yang mendekati nol berarti pasar belum menunda dan membebankan
+#: funding yang benar-benar nol adalah benar. Tapi rate absurd kecil juga
+#: bisa jadi data rusak, jadi ada lantai: di bawahnya, ukuran posisi
+#: yang menjelaskan pergerakan, bukan rate-nya.
+FUNDING_RATE_FLOOR = 1e-7
+
+#: Batas atas rate funding per periode. Rate di atas ini tidak pernah
+#: terjadi di pasar nyata; kalau terbaca, itu data salah, dan membebankan
+#: angka itu akan menghapus seluruh P&L posisi dalam satu-detik.
+FUNDING_RATE_CEILING = 0.01
+
+
+def funding_cost(
+    position_side: str,
+    notional: float,
+    held_seconds: float,
+    funding_rate: Optional[float] = None,
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Biaya funding untuk posisi yang ditutup, dalam mata uang.
+
+    Perpetual futures tidak punya expiry; biayanya dibayar dari posisi yang
+    masih terbuka. Tidak menghitungnya berarti biaya yang dilaporkan
+    SELALU terlalu kecil - dan untuk strategi yang hold-nya jauh lebih
+    lama dari satu periode, itu bukan selisih kecil.
+
+    Arahnya: funding positif berarti Long membayar dan Short menerima.
+    Jadi biaya bertanda positif untuk LONG dan negatif untuk SHORT.
+
+    Dihitung di waktu TUTUP, bukan akrual per periode. Akrual periodik
+    butuh state yang bertahan di setiap titik kegagalan - crash di tengah
+    periode berarti biaya yang hilang atau dibayar dua kali. Membebankan
+    seluruh akrual saat tutup membuat biaya jadi bagian terikat dari
+    P&L: kalau proses mati, biaya yang belum dibayar hilang bersama
+    posisinya, bukan terkirim dua kali.
+
+    `funding_rate` boleh None (data belum diterima) dan hasilnya 0.0.
+    Menebak rate dari default berarti membebankan angka yang tidak pernah
+    bisa diverifikasi; tidak membebankan apa pun berarti dilaporkan
+    jujur bahwa angka itu belum diketahui.
+    """
+    meta: Dict[str, Any] = {
+        "held_seconds": float(held_seconds),
+        "periods": 0.0,
+        "funding_rate": None,
+        "gross_cost": 0.0,
+        "note": "tidak ada (tidak ada periode settlement yang selesai)",
+    }
+
+    if funding_rate is None:
+        return 0.0, meta
+
+    try:
+        rate = float(funding_rate)
+    except (TypeError, ValueError):
+        return 0.0, meta
+
+    # Data rusak dibuang, bukan dipakai. Rate di luar batas bukan pasar
+    # yang ekstrem, itu feed yang salah.
+    #
+    # Rate NOL adalah rate yang valid dan diketahui: pasar tidak menunda.
+    # Lantai hanya berlaku untuk rate NONZERO yang terlalu kecil, karena di
+    # situ kita tidak bisa membedakan "funding sangat tipis" dari "feed
+    # belum mengisi". Menolak nol secara tidak sengaja membuat meta
+    # melaporkan periode 0 untuk posisi yang jelas sudah melewati
+    # settlement, dan laporan itu terlihat seperti "belum ada funding"
+    # alih-alih "funding-nya memang nol".
+    #
+    # Batas bawah dibuat longgar sedikit dari `FUNDING_RATE_FLOOR`: rate
+    # yang TEPAT di floor tiba di sini sebagai hasil pembagian floating
+    # point, yang bisa sedikit di bawahnya, dan perbandingan `<=` yang
+    # ketat akan membuangnya. Safer untuk membebankan rate yang sangat
+    # kecil daripada membuang rate yang sah.
+    if abs(rate) > 0.0 and abs(rate) < FUNDING_RATE_FLOOR * 0.99:
+        return 0.0, meta
+    if abs(rate) > FUNDING_RATE_CEILING:
+        return 0.0, meta
+
+    periods = max(0.0, float(held_seconds)) / FUNDING_PERIOD_SECONDS
+
+    # Periode pecahan dibayar penuh di periode yang memotongnya. Bursa
+    # tidak membagi prorata; memprosesnya secara proporsional akan
+    # undercharge setiap posisi yang ditutup di antara dua settlement, dan
+    # itu mayoritas posisi.
+    #
+    # `ceil` dan bukan `int(x) + 1`: untuk 2.0 periode persis, `int+1`
+    # menghasilkan 3 dan membebankan satu periode yang belum settlement.
+    # `ceil` memberi 2 untuk 2.0 dan 3 untuk 2.5 — benar keduanya, dan
+    # 0.0 detik tetap 0, bukan 1.
+    settled = float(math.ceil(periods)) if periods > 0 else 0.0
+
+    notional = abs(float(notional))
+    # Long MEMBAYAR saat rate positif; Short membayar saat rate negatif.
+    # Tanda di sini adalah tanda biaya, bukan tanda arus dana: untuk
+    # LONG, rate positif menghasilkan biaya positif, persis seperti fee.
+    signed = rate if str(position_side).upper() == "LONG" else -rate
+    gross = notional * rate * settled
+    cost = notional * signed * settled
+
+    meta.update({
+        "periods": settled,
+        "funding_rate": rate,
+        "gross_cost": gross,
+        "signed_cost": cost,
+        "note": "{:.2f} periode @ {:+.4%}".format(settled, rate),
+    })
+    return cost, meta
 
 
 def describe_cost(meta: Optional[Dict[str, Any]]) -> str:

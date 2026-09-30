@@ -5,6 +5,7 @@ Scalping mode: batch close, reduced logging, throughput tinggi.
 """
 
 import asyncio
+import time
 from decimal import Decimal
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -13,12 +14,13 @@ from core.config import get_config
 from core.event_bus import EventBus, Channels
 from core.logger import get_logger
 from core.market_store import market_store
+from core.utils import parse_db_timestamp
 from database.db import get_db
 from database.repository import Repository
 from database.models import Position, Trade, BalanceSnapshot
 from trading.risk_manager import RiskManager
 from trading.models import Side, CloseReason
-from trading.fill_cost import close_fill_price, describe_cost
+from trading.fill_cost import close_fill_price, describe_cost, funding_cost
 
 logger = get_logger("position_manager")
 
@@ -234,6 +236,23 @@ class PositionManager:
         # under-charge setiap exiting trade.
         fee = self.risk_manager.calculate_fee(pos["quantity"], fill_price, "TAKER")
 
+        # Biaya FUNDING. Perpetual tidak punya expiry, jadi biayanya dibayar
+        # selama posisi terbuka — dan tanpa baris ini biaya yang dilaporkan
+        # selalu terlalu kecil, semakin lama posisi bertahan.
+        #
+        # Notional dari harga FILL, sama seperti fee di atas: funding adalah
+        # persentase dari nilai posisi, jadi harus dari nilai yang benar-benar
+        # dibayar bursa, bukan dari harga pasar.
+        notional = pos["quantity"] * fill_price
+        opened_at = parse_db_timestamp(pos.get("opened_at"))
+        held = (time.time() - opened_at) if opened_at > 0 else 0.0
+        funding_paid, funding_meta = funding_cost(
+            pos["side"],
+            notional,
+            held,
+            market_store.get_funding(pos["symbol"]),
+        )
+
         # Fee PEMBUKAAN harus ikut dihitung. Fee itu sudah dipotong dari saldo
         # saat posisi dibuka (lihat `open_position`), jadi kalau `realized_pnl`
         # tidak ikut memotongnya, maka:
@@ -253,8 +272,8 @@ class PositionManager:
                 open_fee = float(t.get("fee") or 0.0)
                 break
 
-        # PnL bersih = PnL - fee PEMBUKAAN - fee PENUTUPAN
-        net_pnl = pnl_info["pnl"] - open_fee - fee
+        # PnL bersih = PnL - fee PEMBUKAAN - fee PENUTUPAN - funding
+        net_pnl = pnl_info["pnl"] - open_fee - fee - funding_paid
 
         # Klaim-tunggal: hanya imbalik modal kalau baris ini benar-benar
         # bertransisi OPEN -> CLOSED oleh pemanggil ini. Pemanggil lain yang
@@ -369,6 +388,8 @@ class PositionManager:
             "roe_pct": pnl_info["roe_pct"],
             "fill_price": fill_price,
             "fill_meta": fill_meta,
+            "funding_paid": funding_paid,
+            "funding_meta": funding_meta,
         }
 
     async def batch_close_positions(
@@ -477,7 +498,21 @@ class PositionManager:
             config=self.config,
         )
         fee = self.risk_manager.calculate_fee(pos["quantity"], fill_price, "TAKER")
-        realized_pnl = -pos["margin"] - fee
+
+        # Funding juga dibayar selama posisi terbuka, INCLUDING saat
+        # likuidasi. Menilainya nol di sini sama dengan menganggap
+        # likuidasi lebih murah daripada penutupan biasa, padahal
+        # posisinya justru bertahan lebih lama.
+        notional = pos["quantity"] * fill_price
+        opened_at = parse_db_timestamp(pos.get("opened_at"))
+        held = (time.time() - opened_at) if opened_at > 0 else 0.0
+        funding_paid, funding_meta = funding_cost(
+            pos["side"],
+            notional,
+            held,
+            market_store.get_funding(pos["symbol"]),
+        )
+        realized_pnl = -pos["margin"] - fee - funding_paid
 
         claimed = await repo.liquidate_position(pos["id"], fill_price, realized_pnl)
         if not claimed:
