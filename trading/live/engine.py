@@ -312,10 +312,31 @@ class LiveEngine:
         self.gate.record_order_sent()
 
         if is_close:
-            self.positions.pop(symbol, None)
+            # HANYA lupakan posisi kalau bursa benar-benar mengisinya.
+            #
+            # `outcome.ok` berarti order terkirim, bukan order terisi. Order
+            # limit GTC yangтонусeng di harga yang tidak pernah tercapai akan
+            # tetap `ok` selamanya, dan tanpa cek ini bot menganggap posisi
+            # sudah tertutup sementara bursa masih memegangnya — persis
+            # kebohongan yang paling merusak, karena kelihatannya benar di
+            # log, di DB, dan di HUD.
+            if outcome.filled_size > 0:
+                self.positions.pop(symbol, None)
+                message = "order closing terisi: " + outcome.describe()
+            else:
+                message = (
+                    "order closing BELUM terisi, posisi tetap dilacak. "
+                    + outcome.describe()
+                )
+                logger.warning(
+                    "Order closing untuk %s dikirim tapi belum terisi "
+                    "(filled_size=0). Posisi TIDAK dihapus dari pelacakan; "
+                    "reconcile akan menanganinya kalau di bursa masih ada.",
+                    symbol,
+                )
             return {
                 "success": True,
-                "message": "order closing dikirim: " + outcome.describe(),
+                "message": message,
                 "outcome": outcome,
             }
 
@@ -394,15 +415,6 @@ class LiveEngine:
         sl = results.get("sl")
         tp = results.get("tp")
 
-        if sl is None or not sl.ok:
-            # Posisi terbuka tanpa SL. Ini kondisi paling berbahaya di sistem
-            # ini: dicatat sebagai kondisi kritis dan kill switch dinyalakan.
-            logger.critical(
-                f"POSISI TERBUKA TANPA STOP LOSS: {symbol} {side} {size} @ "
-                f"{entry_price} (SL {stop_loss}). Tutup manual SEKARANG."
-            )
-            self.gate.engage_kill_switch(f"SL gagal dipasang untuk {symbol}")
-
         position = LivePosition(
             symbol=symbol, coin=coin, side=side, size=size,
             entry_price=entry_price, stop_loss=stop_loss,
@@ -410,12 +422,34 @@ class LiveEngine:
             sl_order_id=sl.order_id if sl and sl.ok else None,
             tp_order_id=tp.order_id if tp and tp.ok else None,
         )
+        # Dicatat SEBELUM branch auto-flat, dan itu bukan detail urutan:
+        # `emergency_flat` mengiterasi `self.positions.values()`, jadi
+        # posisi yang belum tercatat akan lolos tanpa pernah ditutup.
         self.positions[symbol] = position
-        logger.info(
-            f"Posisi live {symbol} {side} {size} @ {entry_price} "
-            f"SL={stop_loss}(#{position.sl_order_id}) "
-            f"TP={take_profit}(#{position.tp_order_id})"
-        )
+
+        if sl is None or not sl.ok:
+            # Kenapa menutup, bukan hanya menyalakan kill switch: kill
+            # switch mencegah order BARU, tapi tidak menutup apa pun. Posisi
+            # tanpa SL yang tetap terbuka adalah eksposur tanpa batas. Orang
+            # yang membaca log "tutup manual SEKARANG" berada di dunia yang
+            # salah kalau tidak ada yang menutup otomatis, dan kerugiannya
+            # dibatasi pada gap antara SL gagal dipasang dan order ini
+            # terisi - bukan pada ukuran posisi penuh.
+            logger.critical(
+                "Menutup posisi tanpa proteksi secara otomatis. Kerugian "
+                "dibatasi pada apa yang terjadi sebelum order ini terisi, "
+                "bukan pada posisi penuh."
+            )
+            await self.emergency_flat(
+                reason=f"SL gagal dipasang untuk {symbol} - posisi "
+                       f"{side} ditutup otomatis"
+            )
+        else:
+            logger.info(
+                f"Posisi live {symbol} {side} {size} @ {entry_price} "
+                f"SL={stop_loss}(#{position.sl_order_id}) "
+                f"TP={take_profit}(#{position.tp_order_id})"
+            )
         return position
 
     async def check_pending_fills(self) -> List[Dict[str, Any]]:

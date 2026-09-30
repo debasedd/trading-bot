@@ -5,7 +5,9 @@ Yang diuji di sini adalah hal yang tidak bisa dibaca dari kode: urutan
 panggilan ke bursa dan arah order. Leverage yang dipasang setelah order
 tetap terlihat "benar" di log, hanya leverage-nya yang salah.
 """
+import os
 import unittest
+from pathlib import Path
 from datetime import datetime, timezone
 
 from core.config import LiveConfig
@@ -106,7 +108,17 @@ def _gate(kill=False):
         "TRADEBOT_LIVE_CONFIRMED": "1",
         "HYPERLIQUID_PRIVATE_KEY": KEY,
     }
-    gate = SafetyGate(LiveConfig(), env=env)
+    # State file di-scope ke PID DAN di-unlink dulu. unscoping saja tidak
+    # cukup: dalam satu proses test semua test berbagi PID, jadi test kedua
+    # akan membaca kill switch yang test pertama nyalakan. Gejalanya
+    # persis seperti bug produksi - order ditolak dengan blocker
+    # `KILL_SWITCH aktif` tanpa alasan yang bisa dibaca.
+    state = Path("data_store/test_live_gate_%d.json" % os.getpid())
+    for suffix in ("", ".tmp"):
+        f = Path(str(state) + suffix)
+        if f.exists():
+            f.unlink()
+    gate = SafetyGate(LiveConfig(), env=env, state_path=state)
     if kill:
         gate.engage_kill_switch("test")
     return gate

@@ -85,6 +85,13 @@ class DayCounters:
     orders_sent: int = 0
     realized_pnl: float = 0.0
     consecutive_errors: int = 0
+    # Kill switch yang sudah aktif harus bertahan melewati restart. Kalau
+    # tidak, mematikan bot menjadi "perbaikan": bot yang restart otomatis
+    # karena crash akan kembali dengan limit yang baru saja meledak. Ada
+    # di sini, bukan di `SafetyGate`, supaya `persist()` — yang sudah
+    # berjalan di setiap `record_success` dan `record_error` — menulisnya
+    # tanpa perlu jalur tulis kedua yang bisa terlewat.
+    engaged: bool = False
     _unreadable: bool = field(default=False, repr=False)
 
     @property
@@ -98,6 +105,7 @@ class DayCounters:
             "orders_sent": self.orders_sent,
             "realized_pnl": self.realized_pnl,
             "consecutive_errors": self.consecutive_errors,
+            "engaged": self.engaged,
         }
 
     def load(self, path) -> None:
@@ -118,6 +126,10 @@ class DayCounters:
             self.orders_sent = int(data.get("orders_sent") or 0)
             self.realized_pnl = float(data.get("realized_pnl") or 0.0)
             self.consecutive_errors = int(data.get("consecutive_errors") or 0)
+            # `bool(...)` eksplisit: `bool("false")` adalah True, jadi
+            # file yang berisi string JSON akan menyalakan
+            # kill switch, bukan sebaliknya seperti yang dimaksud penulisnya.
+            self.engaged = bool(data.get("engaged") or False)
         except (TypeError, ValueError) as exc:
             logger.error(
                 "Isi counter harian tidak valid (%s): %s. Order akan "
@@ -174,7 +186,6 @@ class SafetyGate:
         # langsung di-rollover jadi nol. Tanpa ini, setiap panggilan
         # can_send() me-reset counter dan batas harian tidak pernah berlaku.
         self.counters.rollover_if_needed()
-        self.engaged = False
         self._private_key: Optional[str] = None
         self._key_loaded = False
         # Lokasi file state. Default ke folder data_store supaya tidak
@@ -189,6 +200,63 @@ class SafetyGate:
             # File mungkin berisi state hari yang sudah lewat. Setelah
             # load, cek ulang supaya angka basi tidak dipakai.
             self.counters.rollover_if_needed()
+        else:
+            # Tanpa file, `engaged` harus mulai dari False dan TIDAK boleh
+            # menyalin apa pun dari disk. Ini yang membuat test terisolasi:
+            # test yang meng-inject `env` sendiri tidak pernah menyentuh
+            # `data_store/live_counters.json`, jadi tidak bisa mewarisi
+            # kill switch dari run sebelumnya — atau dari test lain.
+            self.counters.engaged = False
+
+        # `TRADEBOT_LIVE_KILL_SWITCH` punya TIGA keadaan, bukan dua, dan
+        # hanya dua yang bisa ditebak dari string:
+        #
+        #   tidak di-set           -> ikuti apa yang tersimpan di disk
+        #   "1"/"true"/"yes"/...   -> paksa AKTIF
+        #   "0"/"false"/"no"/...   -> paksa LEPAS
+        #
+        # Melewatkan keadaan ketiga membuat error ini mustahil ditulis dari
+        # operator: dia menyetel `=0` untuk melepas switch, dan switch-nya
+        # tetap aktif — tanpa satu pesan pun yang bilang bahwa explicit
+        # release-nya diabaikan. Itu persis kelas bug yang paling mahal
+        # di sistem ini: UI semu yang terlihat benar di log.
+        #
+        # Perhatikan bahwa "tidak di-set" TIDAK sama dengan "0". Env yang
+        # tidak ada harus mengikuti disk, kalau tidak bot yang restart
+        # dengan konfigurasi bersih akan diam-diam melepas switch yang
+        # sengaja dinyalakan.
+        raw_kill = str(self.env.get("TRADEBOT_LIVE_KILL_SWITCH", "") or "").strip().lower()
+        if raw_kill and raw_kill not in ("0", "false", "no", "off"):
+            self.counters.engaged = True
+            logger.error(
+                "KILL SWITCH aktif karena TRADEBOT_LIVE_KILL_SWITCH diset. "
+                "Tidak ada order yang dikirim sampai operator melepasnya."
+            )
+        elif raw_kill:
+            if self.counters.engaged:
+                logger.warning(
+                    "KILL SWITCH dilepas karena TRADEBOT_LIVE_KILL_SWITCH=0 "
+                    "diset eksplisit. Pastikan penyebabnya sudah diperbaiki "
+                    "- melepas switch TIDAK memperbaiki apa pun."
+                )
+            self.counters.engaged = False
+            self.counters.consecutive_errors = 0
+            self.persist()
+        elif self.counters.engaged:
+            logger.error(
+                "KILL SWITCH masih aktif dari run sebelumnya. Tidak ada "
+                "order yang dikirim sampai operator melepasnya lewat "
+                "TRADEBOT_LIVE_KILL_SWITCH=0."
+            )
+
+    @property
+    def engaged(self) -> bool:
+        """Kill switch aktif. Proxy ke counter supaya ikut ter-persist."""
+        return self.counters.engaged
+
+    @engaged.setter
+    def engaged(self, value: bool) -> None:
+        self.counters.engaged = bool(value)
 
     def persist(self) -> bool:
         """Simpan counter ke disk. Dipanggil setelah setiap perubahan."""
@@ -386,6 +454,45 @@ class SafetyGate:
         if not self.engaged:
             logger.error(f"KILL SWITCH diaktifkan oleh sistem: {reason}")
         self.engaged = True
+        # Persist di sini, bukan hanya di `record_error`. Jalur ini
+        # dipanggil dari `LiveEngine` (SL gagal dipasang, reconcile
+        # gagal, health check) yang tidak selalu lewat `record_error` —
+        # jadi tanpa baris ini, kill switch yang dinyalakan karena
+        # perlindungan hilang akan hilang lagi saat restart.
+        self.persist()
+
+    def disengage_kill_switch(self, reason: str) -> bool:
+        """
+        Lepas kill switch. Mengembalikan True kalau benar-benar terlepas.
+
+        SENGaja tidak menghapus dirinya sendiri: satu-satunya pemanggil
+        yang sah adalah operator, lewat `TRADEBOT_LIVE_KILL_SWITCH=0`
+        atau perintah TUI. Tidak ada kode produksi yang memanggil ini.
+
+        Melepas RESETJUMLAH error beruntun, karena itu yang menyalakan
+        switch di `record_error`. Kalau tidak, `can_send` akan langsung
+        menyalakannya lagi pada error berikutnya dan operator melihat
+        switch "mati" selama satu order sebelum menyala lagi — lebih buruk
+        daripada tidak melepasnya sama sekali, karena ia який menyalakan
+        keyakinan salah bahwa masalahnya beres.
+        """
+        if not self.engaged:
+            logger.warning(
+                "Permintaan lepas kill switch diabaikan: switch sudah "
+                "tidak aktif."
+            )
+            return False
+
+        logger.warning(
+            "KILL SWITCH dilepas oleh operator: %s. Reset %d error "
+            "beruntun. Pastikan penyebabnya sudah diperbaiki sebelum "
+            "melanjutkan — melepas switch TIDAK memperbaiki apa pun.",
+            reason, self.counters.consecutive_errors,
+        )
+        self.engaged = False
+        self.counters.consecutive_errors = 0
+        self.persist()
+        return True
 
     # ── Pencatatan hasil ───────────────────────────────────────────────
     #

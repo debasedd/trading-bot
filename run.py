@@ -93,6 +93,14 @@ _EXEC_FAIL_LOG_EVERY = 50
 # kali, lalu kembali ke baris periodik di atas.
 _EXEC_FAIL_CRITICAL = 100
 
+# Berapa lama `shutdown()` menunggu live poll loop benar-benar berhenti.
+# Loop itu memanggil bursa lewat `asyncio.to_thread`, jadi satu putaran bisa
+# tersedak beberapa detik menunggu panggilan bursa yang sedang berjalan
+#(timeout jaringan). Menunggu terlalu lama membuat Ctrl+C terasa macet;
+# terlalu singkat meninggalkan task yang masih hidup saat koneksi ditutup.
+# Lima detik menutup kedua kasus tanpa menahan operator.
+_LIVE_TASK_SHUTDOWN_TIMEOUT = 5.0
+
 
 def _print_safe(text: str):
     """
@@ -923,6 +931,38 @@ class TradingBotApp:
         # Batalkan background tasks
         for task in self._background_tasks:
             task.cancel()
+
+        # Live poll loop HARI INI juga. Loop ini sengaja tidak masuk
+        # `_background_tasks` (dibuat sebelum list itu diisi), jadi tanpa
+        # baris di bawah ia tetap berjalan setelah operator menekan
+        # Ctrl+C — memanggil bursa di koneksi yang sudah ditutup, atau
+        # bersaing dengan `close_db` di bawah.
+        #
+        # Urutan penting: batalkan DAN tunggu dulu, baru tutup koneksi.
+        # Membatalkan tanpa menunggu hanya menandai task; ia masih punya
+        # satu giliran eksekusi yang bisa memanggil `self.exchange`.
+        if getattr(self, "_live_task", None) is not None:
+            self._live_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    self._live_task, timeout=_LIVE_TASK_SHUTDOWN_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Live poll loop tidak berhenti dalam %.0f detik. "
+                    "Tidak menunggu lagi; proses sedang keluar.",
+                    _LIVE_TASK_SHUTDOWN_TIMEOUT,
+                )
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                # Task yang sudah selesai dengan exception harus tetap
+                # dilaporkan: di sinilah alasan live mode mati biasanya
+                # tercatat, dan shutdown yang menelan exception-nya
+                # membuat penyebabnya hilang tanpa jejak.
+                logger.error("Live poll loop berakhir dengan error: %s", exc)
+            finally:
+                self._live_task = None
 
         # Tutup koneksi exchange & database
         await self.price_feed.close()

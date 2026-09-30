@@ -82,7 +82,29 @@ class ColoredConsoleFormatter(logging.Formatter):
         msg = re.sub(r"(-[0-9]+\.[0-9]+%?)", f"{RED}\\1{RESET}", msg)
 
         div = f"{DARK_GRAY}│{RESET}"
-        return f"{time_str} {div} {level_badge} {div} {mod_str} {div} {msg}"
+        line = f"{time_str} {div} {level_badge} {div} {mod_str} {div} {msg}"
+
+        # Traceback HARUS ikut. Override `format()` ini tidak pernah
+        # memanggil `formatException`, jadi `logger.exception()` dan
+        # `exc_info=True` — yang keduanya mengirim `record.exc_info` —
+        # dirender sebagai pesan satu baris tanpa jejak sama sekali.
+        #
+        # Untuk bot yang memakai loop 0.3 detik, itu bukan keterangan yang
+        # hilang: tanpa traceback, satu error di iterasi ke-4.000 terlihat
+        # identik dengan 4.000 error berturut, dan tidak ada yang bisa
+        # ditelusuri dari mana asalnya. `run.py::_execution_loop` sempat
+        # harus menyalin `traceback.format_exc()` ke teks pesan karena
+        # formatter ini tidak menghasilkannya.
+        #
+        # Traceback sengaja TIDAK diberi warna: penyorotan di atas berlaku
+        # untuk pesan, dan menerapkannya ke nama file dan nomor baris membuat
+        # keduanya jadi tidak terbaca.
+        if record.exc_info:
+            exc_text = self.formatException(record.exc_info)
+            if exc_text:
+                line = line + "\n" + exc_text.rstrip()
+
+        return line
 
 
 # ─── Startup progress ────────────────────────────────────────────────
