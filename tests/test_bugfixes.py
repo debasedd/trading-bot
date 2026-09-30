@@ -47,7 +47,7 @@ class TestTickQualityGuard(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_bugfix_tickguard.db"
+        self.test_db_path = "data_store/test_bugfix_tickguard_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
             if os.path.exists(p):
@@ -203,7 +203,7 @@ class TestDailyLossCircuitBreaker(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_bugfix_dailyloss.db"
+        self.test_db_path = "data_store/test_bugfix_dailyloss_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
             if os.path.exists(p):
@@ -419,7 +419,7 @@ class TestMarginFeeValidation(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_bugfix_marginfee.db"
+        self.test_db_path = "data_store/test_bugfix_marginfee_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
             if os.path.exists(p):
@@ -455,13 +455,23 @@ class TestMarginFeeValidation(unittest.IsolatedAsyncioTestCase):
 
         Kalau estimasinya meleset, order lolos gerbang lalu ditolak — atau
         lebih buruk, lolos padahal modal sebenarnya tidak cukup.
+
+        Estimasi HARUS dihitung dari harga FILL, bukan harga pasar. Yang
+        dipakai `estimated_fee` di `:556` adalah harga yang sudah
+        digeser, sama dengan yang dipakai `open_position`. Menghitung dari
+        harga pasar membuat estimasi terlalu kecil — dan itu persis celah yang
+        B5 perbaiki, hanya dengan bentuk yang lebih kecil sekarang.
         """
-        from trading.risk_manager import RiskManager
+        from trading.models import Order, TradeAction
+        from trading.paper_engine import (
+            FILL_HALF_SPREAD_FLOOR,
+            FILL_IMPACT_FLOOR,
+        )
 
         rm = self.engine.risk_manager
-        estimated = rm.calculate_fee(0.1, 60000.0, "TAKER")
+        fill = 60000.0 * (1 + FILL_HALF_SPREAD_FLOOR + FILL_IMPACT_FLOOR)
+        estimated = rm.calculate_fee(0.1, fill, "TAKER")
 
-        from trading.models import Order, TradeAction
         order = Order(
             symbol="BTC/USDT:USDT", action=TradeAction.OPEN_LONG,
             quantity=0.1, leverage=10,
@@ -535,7 +545,7 @@ class TestPartialCloseReporting(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_bugfix_partialclose.db"
+        self.test_db_path = "data_store/test_bugfix_partialclose_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
             if os.path.exists(p):

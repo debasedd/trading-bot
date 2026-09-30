@@ -18,7 +18,7 @@ class TestPositionManager(unittest.IsolatedAsyncioTestCase):
     """Pengujian lifecycle posisi dan pemicu otomatis SL/TP/Likuidasi."""
 
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_pos_mgr.db"
+        self.test_db_path = "data_store/test_pos_mgr_%d.db" % os.getpid()
         if os.path.exists(self.test_db_path):
             try:
                 os.remove(self.test_db_path)
@@ -141,8 +141,28 @@ class TestPositionManager(unittest.IsolatedAsyncioTestCase):
         liq_p = all_pos[0]
         self.assertEqual(liq_p["status"], "LIQUIDATED")
         self.assertEqual(liq_p["close_reason"], "LIQUIDATED")
-        # Margin yang hilang sama dengan initial margin
-        self.assertAlmostEqual(liq_p["realized_pnl"], -liq_p["margin"])
+
+        # Kerugian likuidasi = margin yang hangus PLUS biaya outbreak.
+        #
+        # Assertion lama menegtakkan `realized_pnl == -margin` persis, dan itu
+        # encode asumsi bahwa likuidasi gratis. Tidak: bursa tetap menusuk
+        # spread dan tetap memungut fee pada order likuidasinya. `margin` sudah
+        # dipotong saat posisi dibuka, jadi margin itu BUKAN lagi perubahan
+        # saldo di sini — tapi fee dan spread masih terjadi, dan tanpa
+        # membebankannya P&L likuidasi terlihat ~100 bps lebih baik daripada
+        # kenyataan, yang persis kesalahan yang membuat hasil paper terlihat
+        # fiktif.
+        liq_trades = await self.repo.get_trades_by_position(liq_p["id"])
+        liq_fee = sum(
+            float(t.get("fee") or 0.0)
+            for t in liq_trades
+            if (t.get("trade_type") or "").upper() == "LIQUIDATION"
+        )
+        self.assertGreater(
+            liq_fee, 0.0,
+            "fee likuidasi harus dibebankan; bursa tetap memungutnya",
+        )
+        self.assertAlmostEqual(liq_p["realized_pnl"], -liq_p["margin"] - liq_fee)
 
     async def test_concurrent_open_keeps_balance_consistent(self):
         """

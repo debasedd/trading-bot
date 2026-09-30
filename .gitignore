@@ -108,3 +108,18 @@ data_store/backups/
 data_store/*.db.backup-*
 data_store/*.bak
 *.backup-*
+
+# Scratch dari tool analisis dan workflow. Semua prefixed underscore di root
+# sudah diabaikan di atas sebagai artefak shell-redirect; ini melengkapi
+# yangqsisa: file audit sekali-pakai, dump AST, dan bagian dokumen yang
+# sudah dirakit ke docs/technical/.
+data_store/_probe.py
+data_store/_audit*.py
+data_store/_audit*.out
+data_store/_audit*.err
+docs/technical/_sub-*.md
+.snapshot/
+uncov.txt
+
+# Lock runtime Claude Code
+.claude/scheduled_tasks.lock

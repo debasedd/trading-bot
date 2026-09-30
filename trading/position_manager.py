@@ -18,8 +18,25 @@ from database.repository import Repository
 from database.models import Position, Trade, BalanceSnapshot
 from trading.risk_manager import RiskManager
 from trading.models import Side, CloseReason
+from trading.fill_cost import close_fill_price, describe_cost
 
 logger = get_logger("position_manager")
+
+
+def _equity_returns(equity_series: List[float]) -> List[float]:
+    """
+    Return sederhana (bukan logaritmik) dari seri equity, kronologis.
+
+    `RiskManager.calculate_sharpe_ratio` mengambil daftar return, bukan
+    daftar harga. Rasio dari harga mentah tidak bermakna: skew-nya akan
+    didominasi oleh skala harga, bukan oleh performa.
+    """
+    returns: List[float] = []
+    for prev, curr in zip(equity_series, equity_series[1:]):
+        if prev == 0:
+            continue
+        returns.append((curr - prev) / abs(prev))
+    return returns
 
 
 class PositionManager:
@@ -152,12 +169,32 @@ class PositionManager:
         position_id: int,
         close_price: float,
         reason: str = "MANUAL",
+        price_is_final: bool = False,
     ) -> Optional[Dict]:
         """
         Tutup posisi.
 
+        `close_price` adalah harga PASAR (mid), bukan harga fill — kecuali
+        `price_is_final=True`, yang hanya boleh diisi oleh pemanggil yang
+        sudah membebankan biaya sendiri (jalur live, yang benar-benar
+        mengambil harga dari bursa).
+
+        Kenapa biaya TIDAK lagi ditanggung pemanggil: setiap penutupan —
+        SL hit, TP hit, likuidasi, scalp TP, auto-close expired, CLOSE dari
+        order — sebelumnya meneruskan harga pasar apa adanya, sehingga biaya
+        opening yang sudah dibebankan di `_execute_open` tidak pernah punya
+        pasangannya. P&L paper hanya menghitung separuh biaya round trip.
+        Dengan biaya dihitung di sini, tidak ada jalur yang bisa melewatinya
+        karena lupa.
+
+        Arah biaya ditentukan dari sisi POSISI, bukan dari argumen: menutup
+        LONG = SELL, menutup SHORT = BUY. `close_fill_price` yang melakukan
+        konversinya, karena salah arah di sini membalik tanda biaya — biaya
+        jadi terlihat sebagai keuntungan.
+
         Returns:
-            {"realized_pnl": float, "fee": float, "net_pnl": float}
+            {"realized_pnl", "fee", "net_pnl", "fill_price", "fill_meta"}
+            atau None kalau posisi sudah tidak ada.
         """
         repo = await self._get_repo()
 
@@ -172,13 +209,30 @@ class PositionManager:
         if not pos:
             return None
 
-        # Hitung PnL
+        fill_meta = None
+        if price_is_final:
+            fill_price = float(close_price)
+        else:
+            fill_price, fill_meta = close_fill_price(
+                pos["symbol"],
+                pos["side"],
+                close_price,
+                reason=str(reason),
+                config=self.config,
+            )
+
+        # PnL dihitung dari harga fill, bukan harga pasar. Kalau tidak, biaya
+        # yang sudah dibebankan di atas akan dicatat di log tapi tidak pernah
+        # masuk ke angka — dan P&L yang terlihat di HUD tetap berbohong.
         pnl_info = self.risk_manager.calculate_pnl(
-            pos["side"], pos["entry_price"], close_price, pos["quantity"]
+            pos["side"], pos["entry_price"], fill_price, pos["quantity"]
         )
 
-        # Fee penutupan
-        fee = self.risk_manager.calculate_fee(pos["quantity"], close_price, "TAKER")
+        # Fee penutupan, dihitung dari harga FILL — bukan harga pasar. Fee
+        # adalah persentase dari notional, dan notional yang benar adalah yang
+        # benar-benar dibayar bursa. Menghitungnya dari harga pasar
+        # under-charge setiap exiting trade.
+        fee = self.risk_manager.calculate_fee(pos["quantity"], fill_price, "TAKER")
 
         # Fee PEMBUKAAN harus ikut dihitung. Fee itu sudah dipotong dari saldo
         # saat posisi dibuka (lihat `open_position`), jadi kalau `realized_pnl`
@@ -206,7 +260,7 @@ class PositionManager:
         # bertransisi OPEN -> CLOSED oleh pemanggil ini. Pemanggil lain yang
         # berebut posisi yang sama menerima False dan tidak membayar margin
         # untuk kedua kalinya.
-        claimed = await repo.close_position(position_id, close_price, net_pnl, reason)
+        claimed = await repo.close_position(position_id, fill_price, net_pnl, reason)
         if not claimed:
             return None
 
@@ -214,7 +268,7 @@ class PositionManager:
         trade = Trade(
             symbol=pos["symbol"],
             side="SELL" if pos["side"] == "LONG" else "BUY",
-            price=close_price,
+            price=fill_price,
             quantity=pos["quantity"],
             fee=fee,
             fee_type="TAKER",
@@ -256,11 +310,31 @@ class PositionManager:
         equity_now = new_balance + remaining_margin
         stats = await repo.get_trade_stats()
         await repo.bump_peak_balance(equity_now)
+
+        # Drawdown dan Sharpe SELALU 0 karena `update_account_stats` dipanggil
+        # tanpa kedua argumen itu — dan `update_account_stats` hanya menambahkan
+        # kolom yang nilainya bukan None. Jadi risk breaker yang membaca
+        # `max_drawdown`, dan setiap metrik yang ditampilkan di HUD, memakai
+        # angka yang tidak pernah diisi.
+        #
+        # Keduanya dihitung dari seri EQUITY di `balance_history` — bukan dari
+        # saldo, dan bukan dari `peak_balance`. `peak_balance` monoton naik
+        # lintas sesi tanpa reset, jadi drawdown yang diukur dari situ adalah
+        # "sejak awal waktu", bukan "sejak puncak terakhir", dan tidak pernah
+        # pulih.
+        equity_series = await self._get_equity_series()
+        max_dd = self.risk_manager.calculate_max_drawdown(equity_series)
+        sharpe = self.risk_manager.calculate_sharpe_ratio(
+            _equity_returns(equity_series)
+        )
+
         await repo.update_account_stats(
             total_pnl=stats["total_pnl"],
             total_trades=stats["total_trades"],
             winning_trades=stats["winning_trades"],
             losing_trades=stats["losing_trades"],
+            max_drawdown=max_dd,
+            sharpe_ratio=sharpe,
             profit_factor=(
                 stats["profit_factor"]
                 if stats["profit_factor"] != float("inf")
@@ -276,7 +350,7 @@ class PositionManager:
                 "position_id": position_id,
                 "symbol": pos["symbol"],
                 "side": pos["side"],
-                "close_price": close_price,
+                "close_price": fill_price,
                 "realized_pnl": net_pnl,
                 "reason": reason,
             },
@@ -285,7 +359,7 @@ class PositionManager:
 
         logger.debug(
             f"Posisi ditutup: #{position_id} {pos['side']} {pos['symbol']} "
-            f"@ {close_price} PnL={net_pnl:+.2f} alasan={reason}"
+            f"@ {fill_price} PnL={net_pnl:+.2f} alasan={reason}"
         )
 
         return {
@@ -293,6 +367,8 @@ class PositionManager:
             "fee": fee,
             "gross_pnl": pnl_info["pnl"],
             "roe_pct": pnl_info["roe_pct"],
+            "fill_price": fill_price,
+            "fill_meta": fill_meta,
         }
 
     async def batch_close_positions(
@@ -388,17 +464,32 @@ class PositionManager:
         # mengubah saldo lagi — yang dicatat hanya seluruh margin yang hilang
         # sebagai realized PnL. Klaim-tunggal mencegah dua jalur (mis.
         # `update_positions` dan scheduler) sama-sama mencatat likuidasi.
-        realized_pnl = -pos["margin"]
-        claimed = await repo.liquidate_position(pos["id"], price, realized_pnl)
+        #
+        # Biaya outbreak TETAP dibebankan walau margin hilang seluruhnya: bursa
+        # tetap menusuk spread dan tetap memungut fee pada order likuidasinya.
+        # `fee=0` sebelumnya berarti jalur ini terlihat gratis, dan itu membuat
+        # P&L likuidasi terlihat ~100 bps lebih baik daripada kenyataan.
+        fill_price, fill_meta = close_fill_price(
+            pos["symbol"],
+            pos["side"],
+            price,
+            reason="LIQUIDATION",
+            config=self.config,
+        )
+        fee = self.risk_manager.calculate_fee(pos["quantity"], fill_price, "TAKER")
+        realized_pnl = -pos["margin"] - fee
+
+        claimed = await repo.liquidate_position(pos["id"], fill_price, realized_pnl)
         if not claimed:
             return
 
         trade = Trade(
             symbol=pos["symbol"],
             side="SELL" if pos["side"] == "LONG" else "BUY",
-            price=price,
+            price=fill_price,
             quantity=pos["quantity"],
-            fee=0,
+            fee=fee,
+            fee_type="TAKER",
             trade_type="LIQUIDATION",
             position_id=pos["id"],
         )
@@ -411,11 +502,44 @@ class PositionManager:
                 "position_id": pos["id"],
                 "symbol": pos["symbol"],
                 "side": pos["side"],
-                "liquidation_price": price,
+                "liquidation_price": fill_price,
                 "margin_lost": pos["margin"],
+                "fee": fee,
+                "fill_meta": fill_meta,
             },
             source="position_manager",
         )
+
+    async def _get_equity_series(self, limit: int = 500) -> List[float]:
+        """
+        Seri equity dari `balance_history`, kronologis.
+
+        Dipakai untuk `max_drawdown` dan `sharpe_ratio`. Membaca seluruh
+        tabel setiap penutupan akan membuat `update_account_stats` semakin
+        mahal seiring bot berjalan, jadi diambil N terakhir saja — cukup untuk
+        mengukur drawdown yang sedang berlangsung, yang adalah satu-satunya
+        yang bisa diperbaiki.
+
+        Kolom `equity` dipakai, bukan `balance`: equity sudah termasuk margin
+        yang terkunci di posisi terbuka, jadi penurunan equity berarti portofolio
+        benar-benar turun, bukan sekadar uang yang berpindah ke posisi.
+        """
+        repo = await self._get_repo()
+        rows = await repo.get_balance_history(limit=limit)
+        series: List[float] = []
+        # `get_balance_history` mengurutkan DESC (terbaru dulu). Drawdown dan
+        # Sharpe butuh kronologis — reversed(), urutan terbalik membuat
+        # "drawdown" dihitung dari lembah ke puncak, yang menghasilkan angka
+        # yang selalu kecil dan tidak pernah berarti apa pun.
+        for r in reversed(rows):
+            value = r.get("equity")
+            if value is None:
+                value = r.get("balance")
+            try:
+                series.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return series
 
     async def get_open_position_count(self) -> int:
         repo = await self._get_repo()

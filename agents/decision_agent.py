@@ -6,6 +6,7 @@ sinyal dari orderbook imbalance + momentum + teknikal.
 """
 
 import json
+import math
 import time
 from typing import Dict, List, Optional
 
@@ -21,6 +22,21 @@ from core.logger import get_logger
 from core.utils import parse_db_timestamp
 
 logger = get_logger("decision_agent")
+
+# SL/TP untuk sizing saat scalping dimatikan.
+#
+# Salinan literal dari `PaperTradingEngine._execute_open`
+# (trading/paper_engine.py:477-478). Angka itu di-hardcode di sana dan TIDAK
+# boleh diganti dengan `stop_loss_pct` dari config: kalau sizing memakai SL
+# berjarak 0.25% sementara SL yang benar-benar dipasang 2%, notionalnya
+# meledak 8x dan risiko sebenarnya jauh lebih besar dari yang disetujui
+# risk manager.
+#
+# Konsekuensi salinan ini: kedua sisi harus diubah bersama. `paper_engine.py`
+# berada di luar cakupan pekerjaan ini, jadi perubahan ke sana harus
+# dicocokkan manual.
+_NON_SCALP_SL_PCT = 0.02
+_NON_SCALP_TP_PCT = 0.04
 
 
 class DecisionAgent(BaseAgent):
@@ -257,6 +273,30 @@ class DecisionAgent(BaseAgent):
     async def act(self, analysis: dict):
         decisions: List[TradeDecision] = analysis.get("decisions", [])
 
+        # Saldo dibaca SEKALI per siklus, bukan per order, karena `get_account`
+        # adalah query SQLite dan `act()` bisa memproses seluruh batch order
+        # dalam satu siklus. Pada jalur non-scalp, saldo ikut menentukan
+        # quantity, jadi membacanya berulang hanya menambah beban tanpa
+        # mengubah hasil.
+        repo = await self._get_repo()
+        account = await repo.get_account()
+        balance = None
+        if account is not None:
+            try:
+                balance = float(account["balance"])
+            except (KeyError, TypeError, ValueError):
+                balance = None
+
+        cfg = self.config
+        scalp_on = bool(getattr(cfg.scalping, "enabled", False))
+
+        # Hitung dari yang benar-benar DIPUBLISKAS, bukan dari `decisions`.
+        # Ringkasan di bawah tidak boleh mengklaim posisi yang dilewati
+        # gerbang validitas — kalau tidak, log berbulan-bulan menyebut bot
+        # membuka 3 posisi padahal tidak satu pun sampai ke bursa.
+        opens = 0
+        closes = 0
+
         for decision in decisions:
             if decision.action == TradeAction.HOLD:
                 continue
@@ -271,16 +311,145 @@ class DecisionAgent(BaseAgent):
                 reasoning=decision.reasoning,
             )
 
+            if decision.action in (TradeAction.OPEN_LONG, TradeAction.OPEN_SHORT):
+                # ── Ukuran posisi dihitung DI SINI ────────────────────────
+                #
+                # `Order.quantity` yang None dulu berarti "biarkan engine yang
+                # hitung". Jalur itu hanya hidup di paper engine
+                # (paper_engine.py:517-535) karena ia baru tahu harga fill
+                # saat eksekusi. LiveExecutor tidak punya jalur itu: ia
+                # mengirim `size=order.quantity or 0.0` ke bursa, jadi None
+                # menjadi size 0 — order yang benar-benar terkirim dengan
+                # ukuran nol. Jadi `act()` adalah satu-satunya titik yang
+                # dilewati SEMUA order sebelum sampai ke engine mana pun, dan
+                # hanya titik ini yang juga memegang RiskManager yang sama
+                # dengan kedua engine.
+                #
+                # Urutan langkah di bawah mengikuti paper engine persis.
+                # Mengubah urutan atau menggunakan angka lain di sini membuat
+                # paper dan live menghitung ukuran berbeda untuk sinyal yang
+                # sama — selisih yang tidak terlihat sampai ukurannya meleset
+                # jauh.
+                # Harga & leverage dikonversi dalam try. Feed bisa menulis
+                # apa saja ke market_store, dan exception yang lolos dari sini
+                # akan mematikan seluruh siklus agen — bukan hanya order ini.
+                try:
+                    price = float(market_store.get_price(decision.symbol) or 0.0)
+                except (TypeError, ValueError):
+                    price = 0.0
+                side_str = "LONG" if decision.action == TradeAction.OPEN_LONG else "SHORT"
+                # Leverage dibaca dari config kalau kosong, lalu dipaksa jadi
+                # int — nilai yang tidak bisa jadi int berakhir di gerbang
+                # "leverage tidak valid" di bawah, bukan jadi exception.
+                try:
+                    leverage = int(decision.leverage or cfg.risk.default_leverage)
+                except (TypeError, ValueError):
+                    leverage = 0
+
+                if not math.isfinite(price) or price <= 0:
+                    self.logger.warning(
+                        f"{decision.action.value} {decision.symbol} dilewati: "
+                        f"tidak ada harga pasar (harga={price})"
+                    )
+                    continue
+
+                if leverage < 1:
+                    self.logger.warning(
+                        f"{decision.action.value} {decision.symbol} dilewati: "
+                        f"leverage tidak valid (leverage={leverage})"
+                    )
+                    continue
+
+                if balance is None:
+                    self.logger.warning(
+                        f"{decision.action.value} {decision.symbol} dilewati: "
+                        f"akun belum diinisialisasi"
+                    )
+                    continue
+
+                sl_pct = float(decision.stop_loss_pct or cfg.scalping.tight_sl_pct)
+                tp_pct = float(decision.take_profit_pct or cfg.scalping.fast_tp_pct)
+                stop_loss = self.risk_manager.calculate_stop_loss(price, side_str, sl_pct)
+                take_profit = self.risk_manager.calculate_take_profit(price, side_str, tp_pct)
+
+                if scalp_on:
+                    sizing = self.risk_manager.calculate_scalp_position_size(
+                        balance=balance, entry_price=price, leverage=leverage
+                    )
+                else:
+                    # SL/TP untuk sizing di sini sengaja memakai
+                    # `_NON_SCALP_*`, bukan `sl_pct`/`tp_pct` di atas —
+                    # sama seperti paper_engine.py:477-478. Pakai pct scalp di
+                    # sini membuat kedua jalur tidak lagi menghasilkan
+                    # angka yang sama.
+                    stop_loss = self.risk_manager.calculate_stop_loss(
+                        price, side_str, _NON_SCALP_SL_PCT
+                    )
+                    take_profit = self.risk_manager.calculate_take_profit(
+                        price, side_str, _NON_SCALP_TP_PCT
+                    )
+                    sizing = self.risk_manager.calculate_position_size(
+                        balance=balance,
+                        entry_price=price,
+                        stop_loss_price=stop_loss,
+                        leverage=leverage,
+                    )
+                quantity = float(sizing["quantity"])
+
+                # Gerbang validitas terakhir sebelum order menyentuh bursa.
+                #
+                # Kenapa wajib di sini dan bukan "biarkan engine yang menolak":
+                # quantity NaN lolos ke Hyperliquid tanpa nama parameter yang
+                # jelas, dan SL di atas entry pada LONG adalah stop instan yang
+                # dieksekusi bursa dalam hitungan milidetik — di live itu
+                # rugi nyata di detik pertama. Ukuran fiktif yang lolos hanya
+                # akan berubah jadi order sungguhan.
+                problems = []
+                if not math.isfinite(quantity) or quantity <= 0:
+                    problems.append(f"quantity tidak valid ({quantity})")
+                if not math.isfinite(stop_loss) or stop_loss <= 0:
+                    problems.append(f"stop loss tidak valid ({stop_loss})")
+                if not math.isfinite(take_profit) or take_profit <= 0:
+                    problems.append(f"take profit tidak valid ({take_profit})")
+                if side_str == "LONG" and not (stop_loss < price < take_profit):
+                    problems.append(
+                        f"SL/TP terbalik untuk LONG (sl={stop_loss}, "
+                        f"price={price}, tp={take_profit})"
+                    )
+                if side_str == "SHORT" and not (take_profit < price < stop_loss):
+                    problems.append(
+                        f"SL/TP terbalik untuk SHORT (sl={stop_loss}, "
+                        f"price={price}, tp={take_profit})"
+                    )
+
+                if problems:
+                    self.logger.warning(
+                        f"{decision.action.value} {decision.symbol} dilewati: "
+                        f"{'; '.join(problems)}"
+                    )
+                    continue
+
+                order.quantity = quantity
+                order.leverage = leverage
+                order.stop_loss = stop_loss
+                order.take_profit = take_profit
+                order.price = price
+                opens += 1
+
             await self.publish(Channels.TRADE_DECISION, {
                 "order": order,
                 "decision": decision,
                 "stop_loss_pct": decision.stop_loss_pct,
                 "take_profit_pct": decision.take_profit_pct,
+                # Key baru: sizing harus bisa diaudit dari luar. Tanpa ini
+                # tidak ada jejak angka yang benar-benar dikirim ke bursa.
+                "quantity": order.quantity,
+                "entry_price": order.price,
             })
+            if decision.action == TradeAction.CLOSE:
+                closes += 1
 
         # Log ringkas (tidak spam per posisi)
-        opens = sum(1 for d in decisions if d.action in (TradeAction.OPEN_LONG, TradeAction.OPEN_SHORT))
-        closes = sum(1 for d in decisions if d.action == TradeAction.CLOSE)
         if opens or closes:
             self.logger.info(
                 f"Scalp: {opens} posisi baru, {closes} ditutup"

@@ -2,10 +2,12 @@
 core/config.py — Pemuat & validasi konfigurasi dari config.yaml
 """
 
+import logging
 import os
+import sys
 import yaml
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field, fields
+from typing import Any, List, Optional, Tuple
 from pathlib import Path
 
 
@@ -405,11 +407,217 @@ class AppConfig:
     cryptopanic_token: Optional[str] = None
 
 
-def _apply_dict(obj, data: dict):
-    """Terapkan dict ke dataclass, abaikan key yang tidak ada."""
+def _config_logger():
+    """
+    Ambil logger untuk pesan diagnostik konfigurasi.
+
+    Import-nya SENGAJA di dalam fungsi, bukan di atas modul. `core/logger.py`
+    meng-import `get_config` dari file ini, jadi `from core.logger import
+    get_logger` di level modul akan jadi lingkaran import: saat
+    `core.logger` diimpor pertama kali, ia butuh `core.config`, dan
+    `core.config` sedang belum selesai dievaluasi.
+
+    Yang lebih berbahaya dari lingkaran import adalah RE-ENTRANSINYA.
+    `get_logger()` memanggil `setup_logger()` kalau logger induk belum punya
+    handler, dan `setup_logger()` memanggil `get_config().logging` — yang
+    memanggil `load_config()` lagi. Karena `get_config()` baru menulis
+    `_config`-global SESUDAH `load_config()` selesai, posisi di mana
+    `load_config` sedang memproses file yang hilang akan melihat `_config`
+    masih `None`, memanggil `load_config()` lagi, dan seterusnya sampai
+    RecursionError. Jadi logger di sini hanya boleh diambil lewat
+    `logging.getLogger` langsung — tanpa `setup_logger` — supaya tidak ada
+    yang memanggil `get_config` dari dalam `load_config`.
+    """
+    return logging.getLogger("trading_bot.config")
+
+
+# Nama field setiap dataclass config, dipakai untuk mendeteksi key yang diketik
+# salah di config.yaml. Dibangun sekali per kelas dan di-cache, bukan dihitung
+# per `_apply_dict` call, karena `load_config` memanggilnya ~20 kali.
+_KNOWN_FIELDS: dict = {}
+
+
+def _field_names(cls) -> frozenset:
+    """Nama field dataclass `cls`, di-cache per kelas."""
+    names = _KNOWN_FIELDS.get(cls)
+    if names is None:
+        names = frozenset(f.name for f in fields(cls))
+        _KNOWN_FIELDS[cls] = names
+    return names
+
+
+def _type_matches(value: Any, expected) -> bool:
+    """
+    Apakah `value` masuk akal untuk field bertipe `expected`.
+
+    Ini pemeriksaan LONGGAR dan sengaja hanya menyaring yang jelas-jelas
+    salah, bukan memaksa konversi. Tujuannya bukan menjamin tipe, tapi
+    mencegah satu kelas kegagalan yang sebelumnya tidak terlihat sama sekali:
+    `max_open_positions: "tiga puluh"` di config.yaml akan lolos `hasattr`
+    lalu di-set apa adanya, dan baru meledak jauh di dalam RiskManager saat
+    order sedang berjalan — jauh dari file config yang salah menyebabkannya.
+
+    `bool` ditangani terpisah karena di Python `bool` adalah subclass `int`,
+    jadi tanpa pemeriksaan eksplisit `enabled: "true"` lolos sebagai int.
+    """
+    if expected is bool:
+        return isinstance(value, bool)
+    if expected is int:
+        # `float` tidak diterima untuk field int. `max_open_positions: 2.5`
+        # akan dipakai apa adanya sebagai batas jumlah posisi, dan
+        # membiarkan 2.5 posisi terbuka bukan hal yang bisa dibatalkan.
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected is float:
+        # `int` aman(float(x) valid), dan YAML sering menulis `2` untuk
+        # field float, jadi menolak int di sini hanya menghasilkan
+        # warning palsu tanpa mencegah satu pun bug.
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected is str:
+        return isinstance(value, str)
+    if expected is list:
+        return isinstance(value, list)
+    if expected is tuple:
+        return isinstance(value, (list, tuple))
+    # Tipe compound (dataclass, Optional, Union) tidak dicoba ditelusuri;
+    # nilainya sudah divalidasi oleh validator khusus di bawah.
+    return True
+
+
+def _apply_dict(obj, data: dict, section: str = "") -> None:
+    """
+    Terapkan dict ke dataclass. Key yang tidak dikenal DIBUANG dengan warning.
+
+    Kenapa tidak dibuang diam-diam seperti sebelumnya: `hasattr(obj, key)`
+    yang tanpa `else` membuat typo di config.yaml (`max_risk_per_tradee`)
+    atau key yang dihapus dari dataclass hilang begitu saja, dan bot berjalan
+    dengan nilai default tanpa satu baris pun yang mengatakannya. Di file
+    konfigurasi yang SEGURANYA menentukan profil risiko, konfigurasi yang
+    gagal dimuat sebagian jauh lebih berbahaya daripada konfigurasi yang gagal
+    dimuat sama sekali.
+
+    Nilai yang tipenya salah juga diperingatkan, tapi TETAP di-set. Menolak
+    seluruh config hanya karena satu salah ketik akan membuat bot tidak bisa
+    start, dan operator lebih tepat memperbaikinya setelah melihat warning lalu
+    restart daripada kehilangan seluruh konfigurasi. Yang dicegah di sini adalah
+    kegagalan senyap, bukan ketidaksempurnaan.
+    """
+    if not isinstance(data, dict):
+        _config_logger().warning(
+            f"Bagian config '{section or '?'}' bukan dict (bertipe "
+            f"{type(data).__name__}); seluruh isinya dilewati"
+        )
+        return
+
+    known = _field_names(type(obj))
     for key, value in data.items():
-        if hasattr(obj, key):
-            setattr(obj, key, value)
+        if not hasattr(obj, key):
+            # Key typo, atau key milik versi lama file ini.
+            _config_logger().warning(
+                f"Key config '{section}.{key}' di config.yaml tidak dikenal "
+                f"dan DIABAIKAN — nilai operator tidak pernah dipakai. "
+                f"Key yang dikenal di bagian ini: {', '.join(sorted(known)) or '(kosong)'}"
+            )
+            continue
+        if not _type_matches(value, type(getattr(obj, key, None))):
+            _config_logger().warning(
+                f"Nilai config '{section}.{key}' bertipe "
+                f"{type(value).__name__}, bertentangan dengan field "
+                f"bertipe {type(getattr(obj, key, None)).__name__}; nilai "
+                f"dipakai apa adanya ({value!r}). Periksa config.yaml — "
+                f"tipe yang salah di sini bisa gagal jauh dari sumbernya."
+            )
+        setattr(obj, key, value)
+
+
+# ── Pemuatan konfigurasi gagal: apa akibatnya, bukan hanya apa yang terjadi ──
+#
+# Nilai di bawah adalah profil risiko yang BENAR-BENAR dipakai saat
+# config.yaml gagal dimuat — bukan nilai generik. Tiga belas kunci di
+# config.yaml berbeda dari default dataclass, dan enam di antaranya adalah
+# seluruh `RiskConfig`. Kalau file tidak ada, bot tidak berjalan dengan
+# "setting backup": ia berjalan dengan profil risiko lain yang tidak pernah
+# diuji siapa pun, dan bedanya cukup besar untuk mengubah hasil.
+#
+# Arah bedanya penting dan harus jujur di pesan. Default dataclass lebih KETAT
+# pada risiko (2%/trade vs 0.5%, 5% daily loss vs 10%, 3 posisi vs 30) tapi
+# `max_leverage` 20 < 50 dan, lebih penting, loop decision 60 dtk vs 3 dtk —
+# jadi bot yang "aman" ini justru 20x lebih lambat, dan keputusan yang
+# tertunda adalah kesempatan yang sudah lewat. Tidak satu pun dari dua profil
+# ini yang dimaksud; yang dimaksud hanya yang tertulis di config.yaml.
+_MISSING_CONFIG_RISK_DEFAULTS = (
+    "max_risk_per_trade=0.02 (config.yaml: 0.005) — risiko per trade 4x lebih besar",
+    "max_leverage=20 (config.yaml: 50) — leverage maksimum lebih rendah",
+    "max_daily_loss=0.05 (config.yaml: 0.10) — batas rugi harian lebih rendah",
+    "max_drawdown=0.15 (config.yaml: 0.20) — batas drawdown lebih rendah",
+    "max_open_positions=3 (config.yaml: 30) — 10x lebih sedikit posisi boleh terbuka",
+    "default_leverage=5 (config.yaml: 10) — leverage default lebih rendah",
+)
+
+
+def _warn_missing_config_file(config: AppConfig, config_path: Path) -> None:
+    """
+    Laporkan dengan keras bahwa profil risiko aktif BUKAN profil yang ditulis.
+
+    Bug sebelumnya: `load_config` mengembalikan `AppConfig()` telanjang saat
+    file tidak ada, tanpa satu baris pun. Pemanggilan `load_config()` ini
+    umumnya terjadi karena working directory salah (bot dijalankan dari folder
+    lain), bukan karena file benar-benar dihapus, jadi gejalanya bukan crash —
+    gejalanya bot yang "jalan normal" dengan setting berbeda total dan nol
+    error di log. Bot yang mengambil risiko 4x lebih besar per trade, tapi
+    mengambil keputusan 20x lebih lambat, tidak akan pernah mencurigai dirinya
+    sendiri hanya dari price chart.
+
+    Dua lapis output, karena "tidak terlihat di terminal" adalah setengah dari
+    bug ini:
+      1. `logger.warning` -> masuk file rotasi, dan ke console begitu
+         `core.logger.setup_logger()` sudah terpasang.
+      2. `print` langsung ke stderr. Alasannya spesifik: `load_config` bisa
+         dipanggil SEBELUM `core.logger.setup_logger()` pernah berjalan, dan
+         `get_logger()` tidak boleh dipanggil dari sini (re-entran
+         `get_config` -> `load_config` -> `get_config`, lihat `_config_logger`).
+         Tanpa handler, `logger.warning` jatuh ke `logging.lastResort` yang
+         hanya menulis ke stderr di level WARNING tanpa format, jadi pesannya
+         mudah tenggelam di antara output lain. `print` memastikan operator
+         benar-benar melihat perubahan profil risiko ini.
+    """
+    risk_lines = "\n".join(
+        f"      {i}. {line}" for i, line in enumerate(_MISSING_CONFIG_RISK_DEFAULTS, 1)
+    )
+
+    _config_logger().warning(
+        f"config.yaml tidak ditemukan di {config_path.absolute()} — memakai "
+        f"default AppConfig(): max_risk_per_trade=0.02, max_daily_loss=0.05, "
+        f"max_drawdown=0.15, max_open_positions=3, max_leverage=20, "
+        f"default_leverage=5. Profil risiko aktif BUKAN yang di config.yaml."
+    )
+
+    # `end_quiet_mode()` mengembalikan logger ke normal supaya
+    # "peristiwa runtime (trade, warning, error) tetap terlihat." Cetakan
+    # banner ini ke stderr supaya operator tidak perlu membuka file log untuk
+    # tahu bahwa profil risiko yang aktif bukan yang ada di config.yaml.
+    try:
+        print(
+            "\n"
+            "  ============================================================\n"
+            "   PERINGATAN RISIKO: config.yaml tidak ditemukan\n"
+            "  ============================================================\n"
+            f"  Dicoba: {config_path.absolute()}\n"
+            "  Bot JALAN dengan default dataclass AppConfig().\n"
+            "  Profil risiko aktif BUKAN yang ditulis di config.yaml:\n"
+            f"{risk_lines}\n"
+            "  Perilaku lain juga berubah:\n"
+            "    - fees.taker 0.0005 vs 0.00045 (biaya turun, hasil PnL bergeser)\n"
+            "    - decision_agent 60s vs 3s (keputusan 20x lebih lambat)\n"
+            "  Penyebab paling umum: working directory salah.\n"
+            "  Jalankan dari root repo agar config.yaml terbaca.\n"
+            "  ============================================================\n",
+            file=sys.stderr,
+            flush=True,
+        )
+    except Exception:  # noqa: BLE001
+        # Menampilkan peringatan tidak boleh menjatuhkan boot. Kalau misal
+        # stderr ditutup, konfigurasi yang dimuat tetap harus dikembalikan.
+        pass
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -418,6 +626,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     config_path = Path(path)
     if not config_path.exists():
+        _warn_missing_config_file(config, config_path)
         return config
 
     with open(config_path, "r", encoding="utf-8") as f:
@@ -425,7 +634,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     # Account
     if "account" in raw:
-        _apply_dict(config.account, raw["account"])
+        _apply_dict(config.account, raw["account"], "account")
 
     # Symbols
     if "symbols" in raw:
@@ -433,15 +642,15 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     # Scanning
     if "scanning" in raw:
-        _apply_dict(config.scanning, raw["scanning"])
+        _apply_dict(config.scanning, raw["scanning"], "scanning")
 
     # Scalping
     if "scalping" in raw:
-        _apply_dict(config.scalping, raw["scalping"])
+        _apply_dict(config.scalping, raw["scalping"], "scalping")
 
     # Target TP/SL dinamis berbasis volatilitas
     if "dynamic_tp_sl" in raw:
-        _apply_dict(config.dynamic_tp_sl, raw["dynamic_tp_sl"])
+        _apply_dict(config.dynamic_tp_sl, raw["dynamic_tp_sl"], "dynamic_tp_sl")
 
     # Ensemble arah LONG/SHORT
     if "ensemble" in raw:
@@ -450,23 +659,32 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         # menimpa dataclass agen dengan dict mentah, jadi harus diterapkan
         # satu level lebih dalam secara eksplisit.
         agents_raw = ens_raw.pop("agents", None)
-        _apply_dict(config.ensemble, ens_raw)
+        _apply_dict(config.ensemble, ens_raw, "ensemble")
         if isinstance(agents_raw, dict):
             for name, sub in agents_raw.items():
                 if hasattr(config.ensemble, name) and isinstance(sub, dict):
-                    _apply_dict(getattr(config.ensemble, name), sub)
+                    _apply_dict(
+                        getattr(config.ensemble, name), sub, f"ensemble.agents.{name}"
+                    )
+                else:
+                    _config_logger().warning(
+                        f"Key config 'ensemble.agents.{name}' diabaikan: bukan "
+                        f"agen ensemble yang dikenal atau bukan dict. "
+                        f"Agen yang dikenal: orderflow, momentum, technical, "
+                        f"microstructure."
+                    )
 
     # Exchange
     if "exchange" in raw:
-        _apply_dict(config.exchange, raw["exchange"])
+        _apply_dict(config.exchange, raw["exchange"], "exchange")
 
     # Risk
     if "risk" in raw:
-        _apply_dict(config.risk, raw["risk"])
+        _apply_dict(config.risk, raw["risk"], "risk")
 
     # Fees
     if "fees" in raw:
-        _apply_dict(config.fees, raw["fees"])
+        _apply_dict(config.fees, raw["fees"], "fees")
 
     # Live trading (UANG SUNGGAHAN).
     #
@@ -478,37 +696,44 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     # Kalau config.yaml suatu saat punya `live.enabled: true`, itu diabaikan
     # dengan sengaja, bukan karena bug.
     if "live" in raw:
-        _apply_dict(config.live, raw["live"])
+        _apply_dict(config.live, raw["live"], "live")
     config.live.enabled = False
 
     # Agent intervals
     if "agent_intervals" in raw:
-        _apply_dict(config.agent_intervals, raw["agent_intervals"])
+        _apply_dict(config.agent_intervals, raw["agent_intervals"],
+                    "agent_intervals")
 
     # US Market
     if "us_market" in raw:
-        _apply_dict(config.us_market, raw["us_market"])
+        _apply_dict(config.us_market, raw["us_market"], "us_market")
 
     # Indicators
     if "indicators" in raw:
-        _apply_dict(config.indicators, raw["indicators"])
+        _apply_dict(config.indicators, raw["indicators"], "indicators")
 
     # Dashboard
     if "dashboard" in raw:
-        _apply_dict(config.dashboard, raw["dashboard"])
+        _apply_dict(config.dashboard, raw["dashboard"], "dashboard")
 
     # Logging
     if "logging" in raw:
-        _apply_dict(config.logging, raw["logging"])
+        _apply_dict(config.logging, raw["logging"], "logging")
 
     # Database
     if "database" in raw and "path" in raw["database"]:
         config.database_path = raw["database"]["path"]
 
     # Snapshot pruning — dibaca dari blok `database` agar zusammen dengan path.
+    #
+    # CATATAN: `agent_log_prune_interval` / `agent_log_keep` juga ditulis di
+    # blok `database` config.yaml tapi TIDAK difilter di sini, jadi keduanya
+    # tidak pernah terbaca dan nilai `run.py::_prune_agent_logs` yang dipakai
+    # tetap default dataclass. Itu bug terpisah (perilaku, bukan visibilitas)
+    # dan sengaja tidak ikut diubah di sini.
     if "database" in raw:
         _apply_dict(config, {k: v for k, v in raw["database"].items()
-                             if k.startswith("snapshot_")})
+                             if k.startswith("snapshot_")}, "database")
 
     # News sources
     if "news_sources" in raw:

@@ -18,9 +18,40 @@ from database.repository import Repository
 from database.models import AgentLog
 from trading.models import Order, TradeAction, Side
 from trading.risk_manager import RiskManager
+from trading.fill_cost import (
+    FILL_BOOK_MALFORMED_SPREAD_PCT,
+    FILL_HALF_SPREAD_FLOOR,
+    FILL_IMPACT_FLOOR,
+    FILL_MAX_TOTAL_COST_PCT,
+    fill_price_after_cost,
+)
 from trading.position_manager import PositionManager
 
 logger = get_logger("paper_engine")
+
+# ── Model fill paper ────────────────────────────────────────────────────
+# Slippage TIDAK lagi dipotong sebagai angka SESUDAH fill. Yang diteruskan
+# ke `open_position` / `close_position` adalah harga yang sudah digeser,
+# karena seluruh konsumennya menghitung dari harga itu:
+# `close_position` menurunkan PnL dari `entry_price` vs `close_price`
+# (position_manager.py:176-178), `open_position` menghitung margin, harga
+# likuidasi, dan fee dari `entry_price` (:67-75), dan SL/TP diturunkan dari
+# fill yang sama. Kalau biayanya dipotong belakangan, `close_price` di DB
+# jadi fiksi, SL/TP menyala dari level yang salah, dan `position_manager`
+# harus ikut diedit. Bentuk "geser harga" adalah satu-satunya bentuk yang
+# membetulkan semuanya tanpa menyentuh file lain.
+#
+# Angka di bawah adalah LANTAI, bukan target. `market_store` tidak pernah
+# mengkedaluwarsakan order book, dan `get_order_book_age` mengembalikan None
+# untuk book tanpa stempel — sehingga book dari sejam lalu tetap terbaca
+# "valid". Karena itu jalur live hanya boleh MENAMBAH biaya lewat `max()`,
+# tidak pernah `min()`. Book basi, book tanpa stempel, sentinel harga 0, dan
+# book spread sempit semuanya jatuh ke lantai; satu sifat `max` itulah yang
+# membuat input tak tepercaya aman dipakai.
+FILL_HALF_SPREAD_FLOOR = 0.0003             # 3 bps
+FILL_IMPACT_FLOOR = 0.0001                  # 1 bps
+FILL_BOOK_MALFORMED_SPREAD_PCT = 0.05       # 5% — di atas ini book rusak, bukan pasar
+FILL_MAX_TOTAL_COST_PCT = 0.0050            # 50 bps, hanya jaring pengaman
 
 
 class VolatilityGateError(Exception):
@@ -205,6 +236,46 @@ class PaperTradingEngine:
             return {"success": True, "message": "HOLD — tidak ada aksi", "position_id": None, "details": {}}
 
         return {"success": False, "message": f"Aksi tidak dikenal: {order.action}", "position_id": None, "details": {}}
+
+    def _fill_price(
+        self,
+        symbol: str,
+        side: str,
+        ref_price: float,
+        *,
+        reason: str,
+    ) -> tuple:
+        """
+        Harga fill setelah biaya menyeberang dibebankan, plus metadata biaya.
+
+        Perhitungannya tinggal di `trading.fill_cost` karena `PositionManager`
+        membutuhkannya juga saat MENUTUP posisi. Sebelumnya ia hanya ada di
+        sini, sehingga setiap penutupan — SL hit, TP hit, likuidasi, scalp
+        TP, auto-close expired — menutup pada harga `current_price` mentah,
+        yaitu gratis. P&L paper hanya menghitung separuh biaya round trip.
+
+        `side` adalah sisi FILL-nya: "BUY" untuk buka LONG dan tutup SHORT,
+        "SELL" untuk buka SHORT dan tutup LONG. Arah fill tidak sama dengan
+        arah posisi, dan menebak di sini berarti membebankan biaya ke sisi
+        yang salah — untuk SHORT itu persis membalik tandanya.
+
+        Mengembalikan `(fill_price, meta)`. `meta` dipakai `agent_logs`
+        supaya auditor bisa menjawab "kemana uangnya pergi" dari log saja.
+
+        Validasi tick TIDAK di sini, dan itu disengaja: guard tick sudah
+        berjalan di jalur OPEN (`_execute_open`) dengan `sl_pct` hasil gate
+        volatilitas, tepat seperti sebelumnya. Menaruhnya di sini berarti
+        `_fill_price` melempar `VolatilityGateError` di jalur CLOSE, yang
+        tidak menangkapnya — order tutup akan jadi exception, bukan
+        penolakan yang rapi.
+        """
+        return fill_price_after_cost(
+            symbol,
+            side,
+            ref_price,
+            reason=reason,
+            config=self.config,
+        )
 
     def _tick_quality_guard(self, symbol: str, price: float, sl_pct: float):
         """
@@ -478,6 +549,20 @@ class PaperTradingEngine:
             tp_pct = 0.04
             vol_meta = {}
 
+        # ── Biaya menyeberang, digeser ke harga ──────────────────────────
+        # `price` SETELAH baris ini adalah harga yang benar-benar dibayar,
+        # bukan harga yang dilihat feed. SL/TP, sizing, margin, fee, dan
+        # `open_position` semuanya memakai nilai yang sama; kalau satu
+        # consumer masih memegang harga referensi, kurva equity menghitung
+        # biaya yang tidak pernah dibayar.
+        #
+        # Sisi fill dibalik dari sisi posisi: buka LONG = BUY, buka
+        # SHORT = SELL.
+        fill_side = "BUY" if side == "LONG" else "SELL"
+        price, fill_meta = self._fill_price(
+            order.symbol, fill_side, price, reason="OPEN",
+        )
+
         stop_loss = self.risk_manager.calculate_stop_loss(price, side, sl_pct)
         take_profit = self.risk_manager.calculate_take_profit(price, side, tp_pct)
 
@@ -492,11 +577,20 @@ class PaperTradingEngine:
         # dalam hitungan milidetik — dan dua fee dibayar untuk trade yang tidak
         # pernah punya ruang gerak. Guard di bawah mengukur tepat itu: usia tick,
         # dan simpangan harga terhadap median tick-tick terakhir.
-        rejection = self._tick_quality_guard(order.symbol, price, sl_pct)
+        #
+        # Guard memeriksa `fill_meta["ref_price"]`, BUKAN `price` yang sudah
+        # digeser. Guard slippage adalah validasi, bukan penyesuaian: kalau ia
+        # melihat harga fill, ia akan menolak order karena simpangan yang ia
+        # sendiri buat — pada scalp 0.25% whole, biaya 4 bps itu jauh di bawah
+        # ambang, tapi bandingaannya tetap salah dan akan tumbuh salah begitu
+        # spread sungguhan masuk. Slippages diuji terhadap harga PASAR.
+        rejection = self._tick_quality_guard(
+            order.symbol, fill_meta["ref_price"], sl_pct
+        )
         if rejection:
             logger.warning(
                 f"Order {side} {order.symbol} dibatalkan: {rejection} "
-                f"(harga {price:.8g})"
+                f"(harga {fill_meta['ref_price']:.8g})"
             )
             await repo.insert_agent_log(AgentLog(
                 agent_name="paper_engine",
@@ -504,7 +598,12 @@ class PaperTradingEngine:
                 reasoning=(
                     f"Order {side} {order.symbol} dibatalkan guard tick: {rejection}"
                 ),
-                input_data=str({"price": price, "sl_pct": sl_pct}),
+                input_data=str({
+                    "price": fill_meta["ref_price"],
+                    "fill_price": price,
+                    "sl_pct": sl_pct,
+                    "fill_meta": fill_meta,
+                }),
             ))
             return {
                 "success": False,
@@ -644,12 +743,36 @@ class PaperTradingEngine:
             }
 
         # Log eksekusi
+        #
+        # `output_data` memuat SELURUH biaya yang dibebankan, bukan cuma
+        # harga akhirnya. Pembaca run yang rugi harus bisa menjawab "kemana
+        # uangnya pergi" dari log saja: berapa half-spread, berapa impact,
+        # dari mana spread itu (live book atau lantai), dan seberapa tua book
+        # yang dipakai. Tanpa `cost_source` dan `book_age_s`, angka 4 bps itu
+        # tidak bisa dibedakan dari 4 bps hasil book basi yang kebetulan
+        # kebaca.
         await repo.insert_agent_log(AgentLog(
             agent_name="paper_engine",
             action="TRADE_EXECUTED",
-            reasoning=f"Buka {side} {order.symbol} @ {price} qty={quantity:.5f} lev={order.leverage}x",
+            reasoning=(
+                f"Buka {side} {order.symbol} @ {price} "
+                f"(ref {fill_meta['ref_price']:.8g}, biaya "
+                f"{fill_meta['total_cost_pct'] * 10000:.2f}bps "
+                f"{fill_meta['cost_source']}) qty={quantity:.5f} "
+                f"lev={order.leverage}x"
+            ),
             input_data=str({"order": str(order)}),
-            output_data=str({"position_id": position_id, "margin": margin}),
+            output_data=str({
+                "position_id": position_id,
+                "margin": margin,
+                "ref_price": fill_meta["ref_price"],
+                "fill_price": price,
+                "half_spread_pct": fill_meta["half_spread_pct"],
+                "impact_pct": fill_meta["impact_pct"],
+                "total_cost_pct": fill_meta["total_cost_pct"],
+                "cost_source": fill_meta["cost_source"],
+                "book_age_s": fill_meta["book_age_s"],
+            }),
         ))
 
         # Broadcast
@@ -681,6 +804,7 @@ class PaperTradingEngine:
                 "margin": margin,
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
+                "fill_meta": fill_meta,
             },
         }
 
@@ -701,7 +825,19 @@ class PaperTradingEngine:
         repo = await self._get_repo()
 
         if order.position_id:
-            # Tutup posisi spesifik
+            # Tutup posisi spesifik.
+            #
+            # Biaya TIDAK lagi dibebankan di sini. `close_position`
+            # membebankannya sendiri sekarang, dari `pos["side"]` yang dibaca
+            # langsung dari baris posisi — sumber kebenaran yang sama dengan
+            # yang dipakai jalur SL/TP/likuidasi. Menghitungnya di sini
+            # sebelumnya MEMBEBANKANNYA DUA KALI: sekali di `_execute_close`,
+            # sekali lagi di `close_position`.
+            #
+            # Konsekuensi dari satu sumber kebenaran: tidak ada jalur
+            # penutupan yang bisa melewatkan biaya karena lupa, dan tidak ada
+            # yang bisa menghitungnya dua kali karena tidak tahu jalan mana
+            # yang sudah adjusting.
             result = await self.position_manager.close_position(
                 order.position_id, price, "SIGNAL"
             )
@@ -709,20 +845,50 @@ class PaperTradingEngine:
                 # B6 — jejak audit. Pembukaan punya TRADE_EXECUTED, penutupan
                 # sebelumnya tidak punya apa pun, sehingga rekonstruksi "kenapa
                 # posisi ini tidak ada lagi" mustahil dari DB.
+                # Biaya di sideways juga ikut dicatat: tanpa itu, fee pembuka
+                # dan penutup terlihat di `result`, sementara slippage-nya
+                # hilang begitu saja — PnL terlihat utuh padahal round trip-nya
+                # tidak.
+                fill_price = result.get("fill_price", price)
+                fill_meta = result.get("fill_meta")
                 await repo.insert_agent_log(AgentLog(
                     agent_name="paper_engine",
                     action="TRADE_CLOSED",
                     reasoning=(
                         f"Tutup posisi #{order.position_id} {order.symbol} "
-                        f"@ {price} PnL={result['realized_pnl']:+.2f} "
-                        f"(fee {result['fee']:.2f}, ROE {result['roe_pct']:+.2f}%)"
+                        f"@ {fill_price} PnL={result['realized_pnl']:+.2f} "
+                        f"(fee {result['fee']:.2f}, ROE {result['roe_pct']:+.2f}%, "
+                        f"slippage {self._describe_fill_meta(fill_meta)})"
                     ),
-                    input_data=str({"price": price, "reason": "SIGNAL"}),
-                    output_data=str(result),
+                    input_data=str({
+                        "price": price,
+                        "fill_price": fill_price,
+                        "reason": "SIGNAL",
+                    }),
+                    output_data=str({
+                        **result,
+                        "ref_price": fill_meta["ref_price"] if fill_meta else price,
+                        "fill_price": fill_price,
+                        "half_spread_pct": (
+                            fill_meta["half_spread_pct"] if fill_meta else 0.0
+                        ),
+                        "impact_pct": (
+                            fill_meta["impact_pct"] if fill_meta else 0.0
+                        ),
+                        "total_cost_pct": (
+                            fill_meta["total_cost_pct"] if fill_meta else 0.0
+                        ),
+                        "cost_source": (
+                            fill_meta["cost_source"] if fill_meta else "none"
+                        ),
+                        "book_age_s": (
+                            fill_meta["book_age_s"] if fill_meta else None
+                        ),
+                    }),
                 ))
                 return {
                     "success": True,
-                    "message": f"Posisi #{order.position_id} ditutup @ {price} PnL={result['realized_pnl']:+.2f}",
+                    "message": f"Posisi #{order.position_id} ditutup @ {fill_price} PnL={result['realized_pnl']:+.2f}",
                     "position_id": order.position_id,
                     "details": result,
                 }
@@ -733,6 +899,19 @@ class PaperTradingEngine:
         if not open_positions:
             return {"success": False, "message": f"Tidak ada posisi terbuka untuk {order.symbol}", "position_id": None, "details": {}}
 
+        # Biaya exit dihitung per-posisi di dalam `close_position`, dari
+        # `pos["side"]` masing-masing baris. Dulu harga disesuaikan SEKALI di
+        # luar loop memakai arah posisi PERTAMA, lalu `close_position` yang
+        # membebankan biayanya — jadi setiap biaya terhitung dua kali.
+        #
+        # Konsekuensi dari memindahkan perhitungan ke dalam closure per
+        # posisi: batch mixed-LONG-plus-SHORT dalam satu simbol, yang
+        # sebelumnya diam-diam membebankan biaya ke arah yang sama untuk
+        # semua posisi, sekarang membebankan tiap posisi sesuai arahnya
+        # sendiri. Itu lebih benar, dan `max_open_positions` plus
+        # `decision_agent.py:217` (satu posisi per simbol) membuat kasus
+        # campuran itu tidak terjadi di jalur ini — jadi ini terutama koreksi
+        # aritmetika, bukan perubahan perilaku.
         total_pnl = 0.0
         closed_ids: List[int] = []
         # B6 — kegagalan per-posisi dicatat, bukan diabaikan. Sebelumnya loop
@@ -740,11 +919,21 @@ class PaperTradingEngine:
         # sehingga "3 posisi ditutup" bisa berarti sebenarnya hanya 1 yang
         # benar-benar menutup, dengan PnL separuh dari yang seharusnya.
         failed: List[dict] = []
+        # Biaya dan harga fill dikumpulkan dari `close_position` per posisi.
+        # Batch bisa berisi lebih dari satu baris, jadi `fill_meta` yang
+        # dipakai untuk log adalah dari posisi PERTAMA yang benar-benar
+        # menutup — cukup untuk jejak audit, dan tidak mengarang angka
+        # untuk posisi yang gagal diklaim.
+        fill_meta = None
+        fill_price = price
         for pos in open_positions:
             result = await self.position_manager.close_position(pos["id"], price, "SIGNAL")
             if result:
                 total_pnl += float(result["realized_pnl"])
                 closed_ids.append(pos["id"])
+                if fill_meta is None:
+                    fill_meta = result.get("fill_meta")
+                    fill_price = result.get("fill_price", price)
             else:
                 # None = klaim gagal, paling sering karena posisi sudah
                 # ditutup jalur lain pada siklus yang sama.
@@ -759,13 +948,27 @@ class PaperTradingEngine:
             action="TRADE_CLOSED",
             reasoning=(
                 f"Tutup semua {order.symbol}: {len(closed_ids)}/{len(open_positions)} "
-                f"berhasil, PnL={total_pnl:+.2f}, gagal={len(failed)}"
+                f"berhasil, PnL={total_pnl:+.2f}, gagal={len(failed)}, "
+                f"slippage {self._describe_fill_meta(fill_meta)}"
             ),
-            input_data=str({"price": price, "reason": "SIGNAL"}),
+            # `fill_price` ikut dicatat supaya pembaca yang merekonstruksi
+            # uang tidak perlu menyimpulkan adjustment-nya sendiri.
+            input_data=str({
+                "price": price,
+                "fill_price": fill_price,
+                "reason": "SIGNAL",
+            }),
             output_data=str({
                 "closed_ids": closed_ids,
                 "total_pnl": total_pnl,
                 "failed": failed,
+                "ref_price": fill_meta["ref_price"],
+                "fill_price": fill_price,
+                "half_spread_pct": fill_meta["half_spread_pct"],
+                "impact_pct": fill_meta["impact_pct"],
+                "total_cost_pct": fill_meta["total_cost_pct"],
+                "cost_source": fill_meta["cost_source"],
+                "book_age_s": fill_meta["book_age_s"],
             }),
         ))
 
@@ -807,6 +1010,30 @@ class PaperTradingEngine:
         }
 
     @staticmethod
+    def _describe_fill_meta(meta: Optional[dict]) -> str:
+        """
+        Ringkasan biaya fill untuk `reasoning`, supaya nominalnya terbaca tanpa
+        membongkar JSON.
+
+        `meta is None` berarti tidak ada fill yang terjadi — posisi sudah
+        hilang sebelum sempat ditutup. Itu bukan "biaya nol", dan mengatakannya
+        sebagai nol akan menutupi kegagalan yang justru perlu terlihat.
+        """
+        if not meta:
+            return "tidak ada (posisi tidak ditemukan)"
+        return (
+            f"{meta['total_cost_pct'] * 10000:.2f}bps dari {meta['cost_source']} "
+            f"(half {meta['half_spread_pct'] * 10000:.2f}bps + "
+            f"impact {meta['impact_pct'] * 10000:.2f}bps"
+            + (
+                f", book {meta['book_age_s']:.2f}s"
+                if meta.get("book_age_s") is not None
+                else ""
+            )
+            + ")"
+        )
+
+    @staticmethod
     def _describe_failures(failed: List[dict]) -> str:
         """Ringkas daftar posisi yang gagal ditutup, untuk pesan error."""
         if not failed:
@@ -824,6 +1051,16 @@ class PaperTradingEngine:
         Cek semua posisi terbuka — update PnL, SL/TP/likuidasi.
 
         Dipanggil secara berkala oleh scheduler dan execution loop.
+
+        PENTING: `prices` di sini SENGaja tidak diberi slippage. Ini kelihatan
+        seperti tempat yang paling wajar untuk menyelipkan adjustment, dan
+        justru karena itu Adjustment TIDAK boleh ada.
+
+        `update_positions` memakai harga yang sama untuk dua hal: menandai PnL
+        belum terealisasi, dan menguji SL/TP. Kalau harga di sini digeser,
+        SL/TP menyala pada level yang tidak pernah ada di pasar — stop
+        "tersentuh" karena phantom yang kita karang sendiri. Mark-to-market
+        harus di harga referensi; yang dibayar biaya Crossing hanya EKSEKUSI.
         """
         prices = market_store.get_all_prices()
         prices.update(self._last_prices)

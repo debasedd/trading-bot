@@ -32,7 +32,14 @@ from trading.risk_manager import RiskManager
 
 class LifecycleBase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.path = "data_store/test_lifecycle.db"
+        # Nama file memuat PID, jadi dua proses yang menjalankan suite
+        # bersamaan tidak saling menimpa atau membaca baris milik satu
+        # sama. Path yang sama untuk semua proses adalah sumber kegagalan
+        # paling sering: `close_position` mengembalikan None (klaim gagal),
+        # `realized_pnl` tertinggal NULL, dan baris lama bertahan melewati
+        # batch-close dan prune — semuanya karena satu proses menulis
+        # DB yang sedang dibaca proses lain.
+        self.path = "data_store/test_lifecycle_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.path + suffix
             if os.path.exists(p):
@@ -79,7 +86,8 @@ class TestFeeAccounting(LifecycleBase):
         pos_id = await self._open(price=50000.0, qty=0.2)
         self.assertIsNotNone(pos_id)
 
-        # Tutup di harga yang sama -> PnL gross harusnya nol.
+        # Tutup di harga PASAR yang sama. PnL gross bukan nol: `close_position`
+        # membebankan spread di sisi exit, jadi harga jualnya di bawah mid.
         await self.pm.close_position(pos_id, 50000.0, "MANUAL")
 
         pos = (await self.repo.get_all_positions())[0]
@@ -89,9 +97,24 @@ class TestFeeAccounting(LifecycleBase):
         self.assertGreater(open_fee, 0, "fee pembukaan harus tercatat")
         self.assertGreater(close_fee, 0, "fee penutupan harus tercatat")
 
+        # Biaya outbreak exit. Versi test ini mengettakkan
+        # `-(open_fee + close_fee)` persis, yang meng-asumsikan posisi datar
+        # tidak membayar spread. Sekarang expectation dihitung dari model
+        # biaya yang sama dengan yang dipakai production, jadi assertion ini
+        # meng-contract "tidak ada biaya yang hilang" alih-alih membekukan
+        # sebuah nominal.
+        from trading.fill_cost import close_fill_price
+
+        _, close_meta = close_fill_price(
+            "BTC/USDT:USDT", "LONG", 50000.0, reason="TEST",
+        )
+        exit_cost = close_meta["total_cost_pct"] * 50000.0 * 0.2
+
         self.assertAlmostEqual(
-            pos["realized_pnl"], -(open_fee + close_fee), places=6,
-            msg="realized_pnl harus mengurangi KEDUA fee",
+            pos["realized_pnl"],
+            -(open_fee + close_fee) - exit_cost,
+            places=4,
+            msg="realized_pnl harus mengurangi KEDUA fee dan biaya outbreak",
         )
 
     async def test_win_rate_not_inflated_by_round_trip_fee(self):
@@ -201,12 +224,40 @@ class TestRaceAndDoubleClaim(LifecycleBase):
             msg="margin + PnL dikembalikan tepat satu kali, "
                 "tanpa memotong fee opening lagi",
         )
+
+        # Posisi datar harus RUGI, dan ruginya harus setotal biaya yang
+        # benar-benar dibayar: dua fee plus biaya outbreak di sisi exit.
+        #
+        # Versi lama menulis `realized == -2 * open_fee`, yang asumsikan fee
+        # tutup identik dengan fee buka dan spread gratis. Keduanya salah
+        # setelah model biaya masuk: `close_fill_price` mengembalikan harga
+        # di bawah mid, jadi fee tutup dihitung dari notional yang lebih
+        # kecil, dan ada satu biaya outbreak yang belum pernah dihitung.
+        # Yang dikunci di sini adalah arah dan besarnya kedua komponen
+        # yang di-assert: tidak ada biaya yang hilang, dan tidak ada yang
+        # terhitung dua kali.
+        from trading.fill_cost import close_fill_price
+
+        close_fee = 0.0
+        for t in await self.repo.get_trades_by_position(pos_id):
+            if (t.get("trade_type") or "").upper() == "CLOSE":
+                close_fee = float(t.get("fee") or 0.0)
+                break
+        self.assertGreater(close_fee, 0.0, "fee penutupan harus tercatat")
+
+        _, close_meta = close_fill_price(
+            "BTC/USDT:USDT", "LONG", 50000.0, reason="TEST",
+        )
+        exit_cost = close_meta["total_cost_pct"] * 50000.0 * 0.2
+
+        self.assertLess(realized, 0.0, "posisi datar harus rugi")
         self.assertAlmostEqual(
-            realized, -2 * open_fee, places=4,
-            msg="posisi datar harus rugi tepat dua fee")
+            realized, -(open_fee + close_fee) - exit_cost, places=4,
+            msg="posisi datar harus rugi sebesar dua fee + biaya outbreak exit",
+        )
 
 
-class TestFeeAccounting(LifecycleBase):
+class TestOpeningFeeNotDoubleCharged(LifecycleBase):
     """
     Regression: fee opening pernah dipotong DUA KALI.
 
@@ -214,6 +265,14 @@ class TestFeeAccounting(LifecycleBase):
     memotong `open_fee` dan nilai itulah yang dikreditkan. Akibatnya
     setiap posisi kehilangan fee opening sekali lagi -- pada 330
     posisi paper itu sekitar 891 USDT hilang tanpa jejak.
+
+    NAMA KELAS INI DULUNYA `TestFeeAccounting`, sama persis dengan kelas di
+    atas. Python membolehkan itu, dan `unittest discover` tidak pernah
+    memperingatkan: kelas kedua menimpa yang pertama, jadi seluruh test di
+    kelas pertama - termasuk `test_realized_pnl_is_net_of_both_fees` - TIDAK
+    PERNAH DIJALANKAN. Angka 570 `def test_` vs 566 kasus yang terkumpul
+    berasal dari sini. Nama itu sudah dipakai untuk regression fee opening
+    yang berbeda, jadi kelas ini dipanggil apa adanya sekarang.
     """
 
     async def test_open_fee_is_not_charged_twice(self):
@@ -255,18 +314,55 @@ class TestFeeAccounting(LifecycleBase):
             msg="fee opening harus sudah terpakai saat opening, "
                 "tidak boleh dipotong lagi saat menutup")
 
-    async def test_flat_trade_loses_exactly_two_fees(self):
+    async def test_flat_trade_loses_exactly_two_fees_plus_spread(self):
         """
-        Buka lalu tutup di harga sama: hasil bersih harus persis
-        -fee opening - fee tutup, tidak lebih dan tidak kurang.
+        Buka lalu tutup di harga pasar yang SAMA: hasil bersih harus persis
+        -fee opening - fee tutup - biaya outbreak di sisi exit.
+
+        Versi lama mengettakkan angka absolut `-9.0`, yang meng-asumsikan
+        posisi datar hanya membayar dua fee dan spread-nya gratis. Assertion
+        itu melanggar konvensi suite yang berlaku di file lain - "test yang
+        mengarang threshold-nya sendiri tetap hijau saat config berubah" -
+        karena `-9.0` membekukan qty=0.2, price=50000 dan tarif taker ke
+        dalam assertion.
+
+        Sekarang expectation dihitung dari komponennya, jadi test ini
+        bertahan saat konfigurasi biaya berubah. Yang di-assert CONTRACT-nya
+        bukan NOMINAL-nya: tidak ada biaya yang hilang, dan tidak ada yang
+        terhitung dua kali.
         """
+        from trading.fill_cost import close_fill_price
+
         pos_id = await self._open(price=50000.0, qty=0.2)
         await self.pm.close_position(pos_id, 50000.0, "MANUAL")
 
         pos = (await self.repo.get_all_positions())[0]
-        self.assertAlmostEqual(
-            float(pos["realized_pnl"]), -9.0, places=4,
-            msg="posisi datar harus rugi tepat dua fee, tidak lebih")
+        realized = float(pos["realized_pnl"])
+
+        # Fees, dibaca dari tabel `trades` - bukan dihitung ulang, karena
+        # tarif taker bisa berubah di tengah jalan.
+        open_fee = 0.0
+        close_fee = 0.0
+        for t in await self.repo.get_trades_by_position(pos_id):
+            ttype = (t.get("trade_type") or "").upper()
+            if ttype == "OPEN":
+                open_fee = float(t.get("fee") or 0.0)
+            elif ttype == "CLOSE":
+                close_fee = float(t.get("fee") or 0.0)
+
+        self.assertGreater(open_fee, 0.0, "fee opening harus tercatat")
+        self.assertGreater(close_fee, 0.0, "fee penutupan harus tercatat")
+
+        # Biaya outbreak exit, dari model yang sama dengan yang dipakai
+        # `close_position`. Sisi LONG menutup dengan SELL, jadi harga jual
+        # lebih RENDAH dari pasar dan biaya menambah kerugian.
+        _, close_meta = close_fill_price(
+            "BTC/USDT:USDT", "LONG", 50000.0, reason="TEST",
+        )
+        exit_cost = close_meta["total_cost_pct"] * 50000.0 * 0.2
+        self.assertGreater(exit_cost, 0.0)
+
+        self.assertAlmostEqual(realized, -open_fee - close_fee - exit_cost, places=2)
 
     async def test_realized_pnl_is_net_of_both_fees(self):
         """`realized_pnl` yang tersimpan harus benar-benar bersih."""

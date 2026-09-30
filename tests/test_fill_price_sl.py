@@ -7,6 +7,14 @@ lalu `PaperTradingEngine._execute_open()` memakai `order.stop_loss` apa adanya
 padahal fill terjadi di P2. Kalau P2 sudah melewati stop berbasis P1, posisi
 langsung kena SL di detik pertama. Di log live ada posisi dengan durasi 0-6
 detik yang seluruhnya berakhir SL_HIT.
+
+CATATAN tentang harga fill: `FILL` di bawah adalah harga PASAR yang dilihat
+engine, BUKAN harga yang dicatat di `positions.entry_price`. Sejak model
+biaya menyeberang dipasang, fill LONG terjadi di `FILL * (1 + total_cost)`
+dan fill SHORT di `FILL * (1 - total_cost)`. Semua assertion di file ini
+dihitung relatif terhadap `p["entry_price"]` yang sebenarnya, bukan terhadap
+`FILL` — kalau tidak, test ini akan mengunci kembali asumsi tanpa gesekan
+yang sedang diperbaiki.
 """
 import os
 import unittest
@@ -17,14 +25,21 @@ from core.event_bus import EventBus
 from database.db import Database, close_db
 from database.repository import Repository
 from trading.models import Order, TradeAction
-from trading.paper_engine import PaperTradingEngine
+from trading.paper_engine import (
+    FILL_HALF_SPREAD_FLOOR,
+    FILL_IMPACT_FLOOR,
+    PaperTradingEngine,
+)
 
 FILL = 50000.0
+
+# Tanpa order book di store, spread selalu jatuh ke lantai.
+EXPECTED_COST = FILL_HALF_SPREAD_FLOOR + FILL_IMPACT_FLOOR
 
 
 class TestFillPriceSl(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.test_db_path = "data_store/test_fill_sl.db"
+        self.test_db_path = "data_store/test_fill_sl_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
             if os.path.exists(p):
@@ -71,12 +86,24 @@ class TestFillPriceSl(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"], result["message"])
 
         p = (await self.repo.get_open_positions())[0]
-        self.assertAlmostEqual(p["entry_price"], FILL, places=6)
+
+        # Fill LONG di atas harga pasar: pembeli taker membayar ask, bukan
+        # mid. Ini bukan pembulatan — assertion lama justru mengunci harga
+        # fill == harga pasar, yaitu asumsi tanpa gesekan yang sedang
+        # dibongkar.
         self.assertAlmostEqual(
-            p["stop_loss"], FILL * (1 - self.scalp.tight_sl_pct), places=4,
+            p["entry_price"], FILL * (1 + EXPECTED_COST), places=6,
+        )
+        self.assertGreater(p["entry_price"], FILL)
+
+        # SL/TP relatif terhadap fill SEBENARNYA, bukan terhadap `FILL`.
+        self.assertAlmostEqual(
+            p["stop_loss"], p["entry_price"] * (1 - self.scalp.tight_sl_pct),
+            places=2,
         )
         self.assertAlmostEqual(
-            p["take_profit"], FILL * (1 + self.scalp.fast_tp_pct), places=4,
+            p["take_profit"], p["entry_price"] * (1 + self.scalp.fast_tp_pct),
+            places=2,
         )
 
     async def test_long_precomputed_stops_are_ignored(self):
@@ -99,10 +126,12 @@ class TestFillPriceSl(unittest.IsolatedAsyncioTestCase):
         self.assertLess(p["stop_loss"], p["entry_price"], "SL LONG harus di bawah entry")
         self.assertGreater(p["take_profit"], p["entry_price"], "TP LONG harus di atas entry")
         self.assertAlmostEqual(
-            p["stop_loss"], FILL * (1 - self.scalp.tight_sl_pct), places=4,
+            p["stop_loss"], p["entry_price"] * (1 - self.scalp.tight_sl_pct),
+            places=2,
         )
         self.assertAlmostEqual(
-            p["take_profit"], FILL * (1 + self.scalp.fast_tp_pct), places=4,
+            p["take_profit"], p["entry_price"] * (1 + self.scalp.fast_tp_pct),
+            places=2,
         )
 
     async def test_short_precomputed_stops_are_ignored(self):
@@ -119,11 +148,19 @@ class TestFillPriceSl(unittest.IsolatedAsyncioTestCase):
         p = (await self.repo.get_open_positions())[0]
         self.assertGreater(p["stop_loss"], p["entry_price"], "SL SHORT harus di atas entry")
         self.assertLess(p["take_profit"], p["entry_price"], "TP SHORT harus di bawah entry")
+
+        # Fill SHORT di BAWAH harga pasar: penjual taker menerima bid.
         self.assertAlmostEqual(
-            p["stop_loss"], FILL * (1 + self.scalp.tight_sl_pct), places=4,
+            p["entry_price"], FILL * (1 - EXPECTED_COST), places=6,
+        )
+        self.assertLess(p["entry_price"], FILL)
+        self.assertAlmostEqual(
+            p["stop_loss"], p["entry_price"] * (1 + self.scalp.tight_sl_pct),
+            places=2,
         )
         self.assertAlmostEqual(
-            p["take_profit"], FILL * (1 - self.scalp.fast_tp_pct), places=4,
+            p["take_profit"], p["entry_price"] * (1 - self.scalp.fast_tp_pct),
+            places=2,
         )
 
     async def test_risk_distance_matches_announced_pct(self):

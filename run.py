@@ -65,6 +65,35 @@ from dashboard.app import run_dashboard
 logger = get_logger("main")
 
 
+# ─── Ritme & pelaporan error `_execution_loop` ───────────────────────
+#
+# `_execution_loop` adalah detak jantung bot: di mode live dia yang
+# mengirim order dan yang mengawasi SL/TP tiap 0.3 detik. Karena itu
+# capture error-nya harus dua-duanya: loop hidup TIDAK BOLEH mati, dan
+# kegagalannya juga TIDAK BOLEH jadi tidak terlihat. Dua angka di bawah
+# menjaga keduanya.
+#
+# Angka tetap, bukan config — sama seperti cadence 0.3 s yang sudah
+# tertulis di docstring loop ini dan di banner startup. Dua sumber
+# angka untuk satu hal lebih buruk daripada satu angka yang perlu
+# restart untuk diubah; konsekuensinya (0.3 s x N kegagalan) ditulis
+# sebagai perkiraan kasar di pesan CRITICAL, bukan sebagai janji.
+_EXEC_TICK_SECONDS = 0.3
+# Kegagalan-kegagalan pertama ditulis dengan traceback penuh. Di
+# sinilah akar masalahnya masih ada (mis. LiveExecutor yang belum punya
+# `_last_prices`, atau ImportError di dalam agen) — bug sebelumnya
+# membuang info itu karena `except Exception` hanya menulis `str(e)`.
+_EXEC_FAIL_TRACE_FIRST = 3
+# Setelah itu, error yang sama cukup satu baris ringkas setiap kelipat
+# 50 kegagalan (setiap ~15 detik): cukup untuk membuktikan loop masih
+# hidup, tidak sampai ribuan baris identik per menit.
+_EXEC_FAIL_LOG_EVERY = 50
+# 100 kegagalan berturut-turut = ~30 detik tanpa satu pun siklus sukses.
+# Di titik ini ini bukan lagi noise transien, jadi naik ke CRITICAL satu
+# kali, lalu kembali ke baris periodik di atas.
+_EXEC_FAIL_CRITICAL = 100
+
+
 def _print_safe(text: str):
     """
     Cetak teks yang mungkin berisi karakter blok/box-drawing.
@@ -292,7 +321,11 @@ class TradingBotApp:
         self._live_task = asyncio.create_task(
             engine.run_loop(interval=5.0, on_decision=_decide))
         self._live_engine_obj = engine
-        return LiveExecutor(engine)
+        # `event_bus` wajib diteruskan: tanpa itu `LiveExecutor._publish`
+        # jadi no-op dan live fill tidak pernah sampai ke HUD. `ExecutionAgent`
+        # dan `PaperTradingEngine` dibangun dengan bus yang sama di bawah,
+        # jadi tiga jalur ini berpublikasi ke tempat yang satu.
+        return LiveExecutor(engine, self.event_bus)
 
     async def initialize(self):
         """Inisialisasi semua subsistem."""
@@ -585,17 +618,101 @@ class TradingBotApp:
         )
 
     async def _execution_loop(self):
-        """Loop responsif eksekusi order & pemantauan posisi (tiap 0.3 detik untuk scalping)."""
+        """
+        Loop responsif eksekusi order & pemantauan posisi (tiap 0.3 detik untuk scalping).
+
+        Dua aturan yang tidak boleh dilanggar di sini:
+
+        1. Loop TIDAK BOLEH mati. Di mode live, posisi yang terbuka hanya
+           dikelola oleh siklus `check_positions()` di bawah; kalau loop
+           ini mati karena satu exception, tidak ada yang lagi memantau
+           SL/TP, tidak ada yang mengunci breakeven, dan tidak ada yang
+           menutup posisi expired. Posisi jadi terlantar, bukan berhenti.
+        2. Loop tidak boleh diam-diam gagal. Bug sebelumnya menulis
+           `logger.error(f"...: {e}")` — hanya pesan exception, tanpa
+           traceback. Antarmuka live yang rusak total (mis. executor yang
+           tidak punya `get_price`) lalu menghasilkan log yang terlihat
+           sehat: ribuan baris IDENTIK per menit, nol order, nol eskalasi.
+           Traceback penuh sekarang ditulis, dan kegagalan berulang
+           dihitung supaya yang penting tidak tenggelam di antara baris
+           yang sama.
+        """
         logger.info("Execution loop dimulai (scalping mode: 0.3s interval)")
+
+        # Berapa banyak siklus gagal BERTURUT-TURUT, bukan total. Satu
+        # iterasi sukses di tengah-tengah me-reset-nya ke nol, jadi error
+        # yang hanya kadang muncul (retry/network blip) tidak pernah
+        # dinaikkan jadi CRITICAL, sedangkan error yang benar-benar
+        # permanen akan terus menumpuk dan akhirnya memicunya.
+        _exec_failures = 0
+
         while self._running:
             try:
                 # 1. Jalankan siklus eksekusi untuk proses order tertunda
                 await self.execution_agent.run_cycle()
                 # 2. Pantau SL/TP, likuidasi, auto-close expired, scalp TP
                 await self.execution_agent.check_positions()
+            except asyncio.CancelledError:
+                # INI BUKAN ERROR. `shutdown()` membatalkan task ini, dan
+                # pada Python 3.8+ CancelledError turun dari BaseException
+                # — bukan Exception — sehingga `except Exception` di bawah
+                # memang TIDAK menangkapnya dan pembatalan merambat apa
+                # adanya (pola yang sama dengan run_cycle di
+                # base_agent.py:99-110).
+                #
+                # Ditulis eksplisit hanya sebagai jangkar: kalau suatu saat
+                # handler ini di-refactor menjadi `except BaseException`,
+                # pembatalan shutdown akan tertangkap dan dihitung sebagai
+                # kegagalan — dan loop justru berputar terus alih-alih mati.
+                logger.debug("Execution loop dibatalkan (shutdown)")
+                raise
             except Exception as e:
-                logger.error(f"Error pada execution loop: {e}")
-            await asyncio.sleep(0.3)
+                _exec_failures += 1
+                if _exec_failures <= _EXEC_FAIL_TRACE_FIRST:
+                    # Traceback penuh di sini, bukan cuma `str(e)`:
+                    # inilah jendela di mana akar masalahnya masih bisa
+                    # dibaca. Setelah `_EXEC_FAIL_TRACE_FIRST` baris, akar
+                    # masalahnya sudah tercetak, jadi pengulangan tidak
+                    # menambah informasi apa pun.
+                    logger.exception(
+                        "Error pada execution loop (kegagalan %d berturut-turut): %s",
+                        _exec_failures, e)
+                elif _exec_failures == _EXEC_FAIL_CRITICAL:
+                    # Satu kali, bukan tiap 0.3 detik selamanya. ~30 detik
+                    # tanpa satu pun siklus bersih di mode live berarti tidak
+                    # ada order, tidak ada pemantauan posisi, dan tidak ada
+                    # yang menutup posisi menua. Logger tetap hidup, jadi
+                    # eskalasi harus berupa SUARA operator, bukan baris log
+                    # ke-6000 yang tidak dibaca siapa pun.
+                    logger.critical(
+                        "Execution loop gagal %d kali berturut-turut "
+                        "(~%.0f detik tanpa satu siklus sukses). Bot masih "
+                        "jalan tapi tidak bekerja: tidak ada order baru dan "
+                        "posisi terbuka tidak dipantau. Perlu pemeriksaan "
+                        "manual — hentikan bot bila ragu. "
+                        "Kesalahan terakhir: %s",
+                        _exec_failures, _exec_failures * _EXEC_TICK_SECONDS, e,
+                        exc_info=True,
+                    )
+                elif _exec_failures % _EXEC_FAIL_LOG_EVERY == 0:
+                    # denyut nadi: membuktikan loop masih hidup tanpa
+                    # membanjiri log dengan baris yang identik.
+                    logger.error(
+                        "Error pada execution loop masih terjadi "
+                        "(%d kegagalan berturut-turut): %s",
+                        _exec_failures, e)
+            else:
+                if _exec_failures:
+                    logger.info(
+                        "Execution loop pulih setelah %d kegagalan berturut-turut",
+                        _exec_failures)
+                _exec_failures = 0
+
+            # `sleep` SENGAJA di luar try/except. Iterasi yang gagal
+            # harus tetap membayar satu tick penuh: kalau sleep-nya ikut
+            # masuk blok error lalu dilewati, loop akan berputar panas
+            # pada exception yang sama dan menaburkan error tanpa jeda.
+            await asyncio.sleep(_EXEC_TICK_SECONDS)
 
     async def _candle_refresh_loop(self):
         """

@@ -11,8 +11,18 @@ from core.config import get_config
 from database.db import Database, close_db
 import database.db as db_module
 from database.repository import Repository
-from trading.paper_engine import PaperTradingEngine
+from trading.paper_engine import (
+    FILL_HALF_SPREAD_FLOOR,
+    FILL_IMPACT_FLOOR,
+    PaperTradingEngine,
+)
 from trading.models import Order, TradeAction, Side
+
+# Fill LONG dibebankan di atas harga pasar: half-spread + impact.
+# Nilai ini bukan tebakan test — ia konstanta yang dipakai engine, supaya
+# test ini menguji Round trip UTUH (biaya masuk + biaya keluar), bukan
+# saldo yang kebetulan cocok.
+FILL_COST = FILL_HALF_SPREAD_FLOOR + FILL_IMPACT_FLOOR
 
 
 class TestPaperTradingEngine(unittest.IsolatedAsyncioTestCase):
@@ -20,7 +30,7 @@ class TestPaperTradingEngine(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         # Gunakan database terpisah untuk pengujian
-        self.test_db_path = "data_store/test_trading_engine.db"
+        self.test_db_path = "data_store/test_trading_engine_%d.db" % os.getpid()
         if os.path.exists(self.test_db_path):
             try:
                 os.remove(self.test_db_path)
@@ -80,15 +90,23 @@ class TestPaperTradingEngine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(p["id"], pos_id)
         self.assertEqual(p["symbol"], "BTC/USDT:USDT")
         self.assertEqual(p["side"], "LONG")
-        self.assertAlmostEqual(p["entry_price"], 60000.0)
-        # Margin = (0.1 * 60000) / 10 = 600.0 USDT
-        self.assertAlmostEqual(p["margin"], 600.0)
 
-        # Cek saldo akun berkurang oleh margin + fee
+        # Harga fill BUKAN harga feed. Taker LONG membayar di atas mid, jadi
+        # `entry_price` harus di atas 60000 — assertion lama yang membandingkan
+        # dengan 60000.0 mengunci asumsi tanpa gesekan.
+        entry = 60000.0 * (1 + FILL_COST)
+        self.assertAlmostEqual(p["entry_price"], entry, places=6)
+
+        # Margin = (0.1 * entry) / 10, dihitung dari harga fill.
+        margin = 0.1 * entry / 10
+        self.assertAlmostEqual(p["margin"], margin, places=2)
+
+        # Cek saldo akun berkurang oleh margin + fee, KEDUA-duanya dihitung
+        # dari harga fill — kalau fee dihitung dari harga pasar, gerbang validasi
+        # dan `open_position` akan memakai dua angka berbeda.
         account = await repo.get_account()
-        # Fee dihitung dari config, bukan ditulis mati di sini.
-        fee = self.engine.risk_manager.calculate_fee(0.1, 60000.0, 'TAKER')
-        expected_balance = 10000.0 - 600.0 - fee
+        fee = self.engine.risk_manager.calculate_fee(0.1, entry, 'TAKER')
+        expected_balance = 10000.0 - margin - fee
         self.assertAlmostEqual(account["balance"], expected_balance, places=2)
 
     async def test_execute_open_and_close(self):
@@ -117,29 +135,41 @@ class TestPaperTradingEngine(unittest.IsolatedAsyncioTestCase):
         res_close = await self.engine.execute_order(order_close)
         self.assertTrue(res_close["success"])
 
-        # PnL harus NET dari KEDUA sisi:
-        #   gross         = (62000 - 60000) * 0.1        = +200.0
-        #   fee buka      = 0.1 * 60000 * fee_rate         =   -3.0
-        #   fee tutup     = 0.1 * 62000 * fee_rate         =   -3.1
-        #   realized_pnl                                    = 193.9
+        # PnL harus NET dari KEDUA sisi, DAN dari biaya menyeberang:
+        #   fill open LONG  = 60000 * (1 + c)   -> lebih mahal dari mid
+        #   fill close LONG = 62000 * (1 - c)   -> lebih murah dari mid
+        #   gross           = (close_fill - open_fill) * 0.1
+        #   fee buka        = 0.1 * open_fill  * fee_rate
+        #   fee tutup       = 0.1 * close_fill * fee_rate
         #
-        # CATATAN: versi lama test ini mengharapkan 196.9 (= 200.0 - 3.1),
-        # yaitu HANYA mengurangi fee tutup. Angka itu justru mengetikkan bug
-        # yang sama: fee buka sudah dipotong dari saldo saat opening, jadi
-        # kalau `realized_pnl` tidak ikut memotongnya, PnL per-trade terlihat
-        # lebih untung dari kenyataan — dan win rate ikut bohong.
+        # Ini inti dari verifikasi round trip: harga bergerak naik, tapi PnL
+        # tetap harus lebih kecil daripada gerakan harga murni, karena taker
+        # membayar dua kali. Assertion lama memakai harga feed di kedua
+        # tempat, jadi ia hanya menguji fee — dan secara tidak sengaja
+        # melegitimasi simulasi tanpa gesekan.
         details = res_close["details"]
-        fee_open = self.engine.risk_manager.calculate_fee(0.1, 60000.0, 'TAKER')
-        fee_close = self.engine.risk_manager.calculate_fee(0.1, 62000.0, 'TAKER')
-        expected_pnl = 200.0 - fee_open - fee_close
+        open_fill = 60000.0 * (1 + FILL_COST)
+        close_fill = 62000.0 * (1 - FILL_COST)
+        gross = (close_fill - open_fill) * 0.1
+        fee_open = self.engine.risk_manager.calculate_fee(0.1, open_fill, 'TAKER')
+        fee_close = self.engine.risk_manager.calculate_fee(0.1, close_fill, 'TAKER')
+        expected_pnl = gross - fee_open - fee_close
         self.assertAlmostEqual(details["realized_pnl"], expected_pnl,
-                               places=6, msg="PnL harus NET dua sisi")
+                               places=6, msg="PnL harus NET dua sisi + slippage")
         self.assertAlmostEqual(details["fee"], fee_close, places=8,
                                msg="fee yang dikembalikan adalah fee TUTUP")
 
+        # Bukti langsung bahwa gesekan membebani hasil: perhitungan naif (tanpa
+        # slippage) menghasilkan PnL lebih besar pada harga yang sama.
+        frictionless = 200.0 - self.engine.risk_manager.calculate_fee(
+            0.1, 60000.0, 'TAKER'
+        ) - self.engine.risk_manager.calculate_fee(0.1, 62000.0, 'TAKER')
+        self.assertLess(expected_pnl, frictionless,
+                        "biaya menyeberang harus mengurangi PnL")
+
         # Saldo akhir = modal awal + PnL bersih dua sisi (margin kembali utuh)
         #             = 10000 + expected_pnl
-        # Perhatikan: margin kembali utuh, PnL sudah bersih dua fee.
+        # Perhatikan: margin kembali utuh, PnL sudah bersih fee DAN slippage.
         repo = await self.engine._get_repo()
         account = await repo.get_account()
         self.assertAlmostEqual(account["balance"],

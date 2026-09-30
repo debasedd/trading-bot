@@ -36,7 +36,7 @@ def _stale_timestamp(seconds_ago):
 
 class TestDecisionAgentEnsembleGating(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.path = "data_store/test_decision_ensemble.db"
+        self.path = "data_store/test_decision_ensemble_%d.db" % os.getpid()
         for suffix in ("", "-wal", "-shm"):
             p = self.path + suffix
             if os.path.exists(p):
