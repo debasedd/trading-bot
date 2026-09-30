@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS positions (
     close_price REAL,
     realized_pnl REAL,
     close_reason TEXT,
-    reasoning TEXT
+    reasoning TEXT,
+    mode TEXT NOT NULL DEFAULT 'paper'
 );
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status, symbol);
 
@@ -58,7 +59,8 @@ CREATE TABLE IF NOT EXISTS trades (
     fee REAL NOT NULL DEFAULT 0,
     fee_type TEXT DEFAULT 'TAKER',
     trade_type TEXT NOT NULL,
-    executed_at TEXT DEFAULT (datetime('now'))
+    executed_at TEXT DEFAULT (datetime('now')),
+    mode TEXT NOT NULL DEFAULT 'paper'
 );
 CREATE INDEX IF NOT EXISTS idx_trades_time ON trades(executed_at);
 
@@ -191,7 +193,72 @@ class Database:
         await self._connection.executescript(SCHEMA_SQL)
         await self._connection.commit()
 
+        # Migrasi kolom yang ditambahkan SETELAH database pertama dibuat.
+        #
+        # `CREATE TABLE IF NOT EXISTS` di SCHEMA_SQL tidak menambah kolom
+        # ke tabel yang sudah ada, jadi database lama akan kehilangan setiap kolom
+        # baru selamanya - dan `INSERT` yang menyebut kolom itu akan gagal
+        # dengan "no such column" yang tidak menyuruh siapa-siapa melihat migrasinya.
+        #
+        # `_add_column_if_missing` di-scope per-kolom dan idempotent, jadi
+        # dipanggil setiap boot tanpa efek samping setelah pertama.
+        await self._migrate_columns()
+
         logger.info(f"Database terhubung: {self.db_path}")
+
+    async def _migrate_columns(self) -> None:
+        """
+        Tambah kolom yang belum ada, tanpa menghapus atau mengubah data.
+
+        Pola `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` dipakai, bukan
+        `CREATE TABLE ... AS SELECT`, karena yang kedua men-drop index dan
+        constraint yang sudah ada.
+
+        Kolom baru SELALU punya default atau NULL-able, supaya baris lama
+        yang sudah ada tidak melanggar constraint saat kolom ditambahkan.
+        """
+        # (tabel, kolom, definisi SQL kolom)
+        migrations = [
+            # Mode penvenance. Live dan paper menulis ke tabel yang sama
+            # (`database_path` satu untuk keduanya), jadi tanpa kolom ini
+            # HUD menampilkan equity curve gabungan yang tidak pernah
+            # terjadi di dunia nyata: profit dari simulasi dicampur dengan
+            # loss dari bursa, dan tidak ada yang bisa dibedakan.
+            #
+            # Default 'paper' karena SEMUA baris yang ada sudah ditulis
+            # oleh paper engine - mengubah default ke live akan melabeli ulang sejarah secara keliru.
+            ("positions", "mode", "TEXT NOT NULL DEFAULT 'paper'"),
+            ("trades", "mode", "TEXT NOT NULL DEFAULT 'paper'"),
+        ]
+
+        for table, column, definition in migrations:
+            await self._add_column_if_missing(table, column, definition)
+
+        # Index untuk memfilter per-mode. Tanpa ini setiap query HUD
+        # menyapu seluruh tabel, dan `positions` tumbuh tanpa batas
+        # selama bot berjalan.
+        for table in ("positions", "trades"):
+            await self._connection.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_mode "
+                f"ON {table}(mode)"
+            )
+        await self._connection.commit()
+
+    async def _add_column_if_missing(
+        self, table: str, column: str, definition: str
+    ) -> None:
+        cursor = await self._connection.execute(
+            f"PRAGMA table_info({table})"
+        )
+        existing = {row[1] for row in await cursor.fetchall()}
+        if column in existing:
+            return
+        await self._connection.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
+        logger.info(
+            f"Migrasi: kolom '{column}' ditambahkan ke tabel '{table}'"
+        )
 
     async def close(self):
         """Tutup koneksi."""

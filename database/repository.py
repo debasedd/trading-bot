@@ -111,10 +111,12 @@ class Repository:
         cursor = await self.db.execute(
             """INSERT INTO positions
                (symbol, side, entry_price, quantity, leverage, margin,
-                liquidation_price, stop_loss, take_profit, status, reasoning)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                liquidation_price, stop_loss, take_profit, status, reasoning,
+                mode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (p.symbol, p.side, p.entry_price, p.quantity, p.leverage, p.margin,
-             p.liquidation_price, p.stop_loss, p.take_profit, p.status, p.reasoning),
+             p.liquidation_price, p.stop_loss, p.take_profit, p.status,
+             p.reasoning, getattr(p, "mode", "paper") or "paper"),
         )
         await self.db.commit()
         return cursor.lastrowid
@@ -180,23 +182,42 @@ class Repository:
         await self.db.commit()
         return cursor.rowcount > 0
 
-    async def get_open_positions(self, symbol: str = None) -> List[dict]:
+    async def get_open_positions(self, symbol: str = None,
+                                mode: str = None) -> List[dict]:
+        """
+        Posisi yang masih terbuka.
+
+        `mode` memfilter 'paper' atau 'live'. None (default) berarti
+        keduanya, yang selama ini satu-satunya perilaku dan tetap
+        default supaya tidak ada pemanggil yang diam-diam berubah
+        eredensinya. Melewati filter di run mode live berarti equity
+        curve HUD menggabungkan simulasi dan uang sungguhan.
+        """
+        clauses = ["status = 'OPEN'"]
+        params = []
         if symbol:
-            rows = await self.db.fetchall(
-                "SELECT * FROM positions WHERE status = 'OPEN' AND symbol = ?",
-                (symbol,),
-            )
-        else:
-            rows = await self.db.fetchall(
-                "SELECT * FROM positions WHERE status = 'OPEN'"
-            )
+            clauses.append("symbol = ?")
+            params.append(symbol)
+        if mode:
+            clauses.append("mode = ?")
+            params.append(mode)
+        sql = (
+            "SELECT * FROM positions WHERE " + " AND ".join(clauses)
+            + " ORDER BY opened_at DESC LIMIT 1000"
+        )
+        rows = await self.db.fetchall(sql, tuple(params))
         return [dict(r) for r in rows]
 
-    async def get_all_positions(self, limit: int = 100) -> List[dict]:
-        rows = await self.db.fetchall(
-            "SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?",
-            (limit,),
-        )
+    async def get_all_positions(self, limit: int = 100,
+                                mode: str = None) -> List[dict]:
+        sql = "SELECT * FROM positions"
+        params = []
+        if mode:
+            sql += " WHERE mode = ?"
+            params.append(mode)
+        sql += " ORDER BY opened_at DESC LIMIT ?"
+        params.append(limit)
+        rows = await self.db.fetchall(sql, tuple(params))
         return [dict(r) for r in rows]
 
     # ─── Trades ──────────────────────────────────────────────
@@ -204,10 +225,12 @@ class Repository:
     async def insert_trade(self, t: Trade) -> int:
         cursor = await self.db.execute(
             """INSERT INTO trades
-               (position_id, symbol, side, price, quantity, fee, fee_type, trade_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (position_id, symbol, side, price, quantity, fee, fee_type,
+                trade_type, mode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (t.position_id, t.symbol, t.side, t.price, t.quantity,
-             t.fee, t.fee_type, t.trade_type),
+             t.fee, t.fee_type, t.trade_type,
+             getattr(t, "mode", "paper") or "paper"),
         )
         await self.db.commit()
         return cursor.lastrowid
@@ -573,11 +596,25 @@ class Repository:
 
     # ─── Statistik ───────────────────────────────────────────
 
-    async def get_trade_stats(self) -> dict:
-        """Hitung statistik performa dari trade yang sudah ditutup."""
-        closed = await self.db.fetchall(
-            "SELECT realized_pnl FROM positions WHERE status IN ('CLOSED', 'LIQUIDATED') AND realized_pnl IS NOT NULL"
+    async def get_trade_stats(self, mode: str = None) -> dict:
+        """
+        Hitung statistik performa dari trade yang sudah ditutup.
+
+        `mode` memfilter 'paper' atau 'live'. Tanpa filter, win rate dan
+        profit factor menggabungkan simulasi dengan uang sungguhan, dan
+        kedua angka itu jadi tidak berarti apa pun - profit simulasi
+        menutupi loss bursa, atau sebaliknya.
+        """
+        sql = (
+            "SELECT realized_pnl FROM positions "
+            "WHERE status IN ('CLOSED', 'LIQUIDATED') "
+            "AND realized_pnl IS NOT NULL"
         )
+        params = ()
+        if mode:
+            sql += " AND mode = ?"
+            params = (mode,)
+        closed = await self.db.fetchall(sql, params)
         if not closed:
             return {
                 "total_trades": 0, "winning_trades": 0, "losing_trades": 0,

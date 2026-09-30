@@ -40,6 +40,11 @@ class Position:
     realized_pnl: Optional[float] = None
     close_reason: Optional[str] = None
     reasoning: Optional[str] = None
+    # 'paper' atau 'live'. Live dan paper menulis ke tabel yang sama, jadi
+    # tanpa kolom ini equity curve di HUD bisa menggabungkan profit
+    # simulasi dengan loss bursa - dan tidak ada yang bisa dibedakan.
+    # Default 'paper' karena semua baris yang sudah ada ditulis paper.
+    mode: str = "paper"
     id: Optional[int] = None
 
 
@@ -54,6 +59,10 @@ class Trade:
     fee: float = 0.0
     fee_type: str = "TAKER"
     executed_at: Optional[str] = None
+    # Lihat catatan `mode` di Position. Sama di sini karena statistik
+    # trade - win rate, profit factor, P&L harian - dihitung dari tabel
+    # ini tanpa memfilter mode, jadi mencampurnya merusak setiap angka.
+    mode: str = "paper"
     id: Optional[int] = None
 
 

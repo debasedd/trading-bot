@@ -558,11 +558,12 @@ class LiveExecutor:
                 stop_loss=getattr(pos, "stop_loss", None),
                 take_profit=getattr(pos, "take_profit", None),
                 status="OPEN",
+                reasoning=reasoning,
                 # Prefix "LIVE " adalah penanda yang membuat baris live
                 # tidak pernah tertukar dengan simulasi: satu query
                 # "posisi mana yang uang sungguhan" harus menemukan
                 # semuanya.
-                reasoning=reasoning,
+                mode="live",
             ))
         except Exception as exc:  # noqa: BLE001
             logger.critical(
@@ -598,6 +599,7 @@ class LiveExecutor:
                 side="BUY" if side == "LONG" else "SELL",
                 price=entry, quantity=qty, fee=fee, fee_type="TAKER",
                 trade_type="OPEN", position_id=row_id,
+                mode="live",
             ))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -822,6 +824,7 @@ class LiveExecutor:
                 side="SELL" if side == "LONG" else "BUY",
                 price=close_price, quantity=size, fee=fee_close,
                 fee_type="TAKER", trade_type="CLOSE", position_id=row_id,
+                mode="live",
             ))
 
             # Statistik tanpa `balance`. `update_account_stats` memang
