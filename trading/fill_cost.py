@@ -42,11 +42,51 @@ from core.market_store import market_store
 
 logger = logging.getLogger("trading_bot.fill_cost")
 
-# LANTAI, bukan target. Lihat docstring modul.
-FILL_HALF_SPREAD_FLOOR = 0.0003             # 3 bps
+# LANTAI GLOBAL, bukan target. Lihat docstring modul.
+#
+# Angka 3 bps ini berasal dari config, BUKAN dari pengukuran. Pengukuran
+# order book historis (research/spread_stability.py, 21.000 snapshot)
+# menunjukkan dua hal yang membatalkan asumsi ini:
+#
+#   * Spread BERSEDARIAN antar simbol. Median 0.12 bps (BTC) sampai
+#     1.97 bps (ENA) - rasio 16x. 3 bps terlalu BESAR untuk BTC dan
+#     sampai terlalu kecil untuk ENA pada p95-nya 6.95 bps.
+#
+#   * Spread BERKORELASI dengan volatilitas. Simbol bergejolak punya
+#     median spread 1.72 bps vs 0.37 bps untuk yang tenang - rasio
+#     4.64x. Jadi 3 bps konstan terlalu optimistic PADA SAAT spread
+#     paling mahal, dan itulah saat kerugian paling besar.
+#
+# Floor global tetap ada sebagai jaring pengaman untuk book basi atau
+# hilang, dan `FILL_HALF_SPREAD_FLOOR_BY_SYMBOL` lebih rendah untuk
+# simbol yang spread-nya memang tipis. Yang menentukan adalah book
+# live; floor hanya berlaku kalau book tidak bisa dipercaya.
+FILL_HALF_SPREAD_FLOOR = 0.0003             # 3 bps - jaring pengaman global
 FILL_IMPACT_FLOOR = 0.0001                  # 1 bps
 FILL_BOOK_MALFORMED_SPREAD_PCT = 0.05       # 5% — di atas ini book rusak, bukan pasar
 FILL_MAX_TOTAL_COST_PCT = 0.0050            # 50 bps, hanya jaring pengaman
+
+#: Floor spread per simbol, dari median terukur (research/spread_stability.py).
+#:
+#: Dipakai SEBAGAI FLOOR, bukan sebagai pengganti pembacaan book live. Kalau
+#: book live bisa dibaca, spread yang dipakai adalah yang terukur. Floor ini
+#: hanya berlaku saat book tidak tersedia atau basi - dan di saat itu,
+#: memakai median simbol yang lebih akurat daripada 3 bps untuk semua.
+#:
+#: Nilai ini akan meleset seiring likuiditas berubah, jadi diperbarui dari
+#: data yang sedang terkumpul, bukan yang dibekukan selamanya.
+FILL_HALF_SPREAD_FLOOR_BY_SYMBOL: Dict[str, float] = {
+    "BTC": 0.000012,    # 0.12 bps
+    "HYPE": 0.000012,   # 0.12 bps
+    "ETH": 0.000037,    # 0.37 bps
+    "XRP": 0.000066,    # 0.66 bps
+    "ZEC": 0.000070,    # 0.70 bps
+    "SOL": 0.000084,    # 0.84 bps
+    "NEAR": 0.000113,   # 1.13 bps
+    "LIT": 0.000128,    # 1.28 bps
+    "PUMP": 0.000175,   # 1.75 bps
+    "ENA": 0.000197,    # 1.97 bps
+}
 
 #: Nama konstanta lama, dipertahankan supaya modul yang sudah mengimpornya
 #: dari `trading.paper_engine` tidak ikut pecah. Definisi aslinya tinggal di
@@ -139,7 +179,13 @@ def fill_price_after_cost(
                 or max_book_age_seconds
             )
 
-    half = FILL_HALF_SPREAD_FLOOR
+    # Floor per-simbol, bukan global. Lihat catatan di
+    # `FILL_HALF_SPREAD_FLOOR_BY_SYMBOL`: median spread antar simbol beda
+    # 16x, jadi memakai 3 bps untuk BTC yang spread-nya 0.12 bps
+    # overcharge-nya 25x - dan overcharge itu menghapus edge yang secara empiris hanya 0.18 per trade.
+    base = symbol.split("/")[0].split(":")[0].upper()
+    floor = FILL_HALF_SPREAD_FLOOR_BY_SYMBOL.get(base, FILL_HALF_SPREAD_FLOOR)
+    half = floor
     source = "floor"
     book_age_s = None
 
@@ -150,7 +196,7 @@ def fill_price_after_cost(
         # timestamp jauh, dikirim saat book sempat renggang), jadi
         # mempercayainya tanpa lantai akan mengembalikan biaya mendekati
         # nol — persis bug yang model ini dibuat untuk hilangkan.
-        half = max(observed, FILL_HALF_SPREAD_FLOOR)
+        half = max(observed, floor)
         source = "live_book"
         book_age_s = book_age
 

@@ -459,17 +459,26 @@ class TestMarginFeeValidation(unittest.IsolatedAsyncioTestCase):
         Estimasi HARUS dihitung dari harga FILL, bukan harga pasar. Yang
         dipakai `estimated_fee` di `:556` adalah harga yang sudah
         digeser, sama dengan yang dipakai `open_position`. Menghitung dari
-        harga pasar membuat estimasi terlalu kecil — dan itu persis celah yang
-        B5 perbaiki, hanya dengan bentuk yang lebih kecil sekarang.
+        harga pasar membuat estimasi terlalu kecil — dan itu persis celah yang B5 perbaiki, hanya dengan bentuk yang lebih kecil sekarang.
         """
         from trading.models import Order, TradeAction
         from trading.paper_engine import (
             FILL_HALF_SPREAD_FLOOR,
             FILL_IMPACT_FLOOR,
         )
+        from trading.fill_cost import FILL_HALF_SPREAD_FLOOR_BY_SYMBOL
 
         rm = self.engine.risk_manager
-        fill = 60000.0 * (1 + FILL_HALF_SPREAD_FLOOR + FILL_IMPACT_FLOOR)
+        # Fee dihitung dari HARGA FILL, bukan harga pasar. `open_position`
+        # menerima `entry_price=price` yang sudah digeser biaya menyeberang,
+        # dan fee adalah persentase dari notional yang benar-benar dibayar.
+        #
+        # Floor spread sekarang PER-SIMBOL (lihat `trading/fill_cost.py`):
+        # BTC terukur 0.12 bps, bukan 3 bps global. Test yang memakai
+        # konstanta global akan menghitung fee 25x lebih besar.
+        base = "BTC"
+        half = FILL_HALF_SPREAD_FLOOR_BY_SYMBOL.get(base, FILL_HALF_SPREAD_FLOOR)
+        fill = 60000.0 * (1 + half + FILL_IMPACT_FLOOR)
         estimated = rm.calculate_fee(0.1, fill, "TAKER")
 
         order = Order(

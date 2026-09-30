@@ -30,11 +30,22 @@ from trading.paper_engine import (
     FILL_IMPACT_FLOOR,
     PaperTradingEngine,
 )
+from trading.fill_cost import FILL_HALF_SPREAD_FLOOR_BY_SYMBOL
 
 FILL = 50000.0
+SYMBOL = "BTC/USDT:USDT"
 
-# Tanpa order book di store, spread selalu jatuh ke lantai.
-EXPECTED_COST = FILL_HALF_SPREAD_FLOOR + FILL_IMPACT_FLOOR
+# Tanpa order book di store, spread jatuh ke floor PER-SIMBOL, bukan
+# floor global. BTC diukur 0.12 bps (lihat
+# research/spread_stability.py), jadi test yang memakai 3 bps akan
+# menghitung fill yang 25x terlalu mahal.
+#
+# Test ini sengaja memakai simbol BTC karena itu yang diukur. Kalau test
+# pindah ke simbol lain, EXPECTED_COST harus ikut berubah - dan itu
+#TUJUANNYA: biaya harus spesifik per simbol.
+EXPECTED_HALF = FILL_HALF_SPREAD_FLOOR_BY_SYMBOL.get(
+    SYMBOL.split("/")[0], FILL_HALF_SPREAD_FLOOR)
+EXPECTED_COST = EXPECTED_HALF + FILL_IMPACT_FLOOR
 
 
 class TestFillPriceSl(unittest.IsolatedAsyncioTestCase):
