@@ -39,6 +39,7 @@ logging.getLogger("flask").setLevel(logging.ERROR)
 WSGIRequestHandler.log_request = _silence_request_log
 
 from core.config import get_config
+from data.order_book_recorder import OrderBookRecorder
 from core.logger import (
     end_quiet_mode,
     get_logger,
@@ -265,6 +266,9 @@ class TradingBotApp:
         self._running = False
         self._background_tasks: List[asyncio.Task] = []
         self._repo: Optional[Repository] = None
+        # Rekorder order book. None kalau gagal start atau dimatikan lewat
+        # `scalping.order_book_interval_s: 0`.
+        self._ob_recorder = None
 
     async def _get_repo(self) -> Repository:
         """Repository tunggal untuk seluruh operasi DB di level aplikasi."""
@@ -912,9 +916,40 @@ class TradingBotApp:
         # sehingga dua pemanggil tidak saling mengganggu.
         maintenance_task = asyncio.create_task(self._maintenance_loop())
         step(label="Starting trading engine · db maintenance")
-        self._background_tasks.extend(
-            [price_task, exec_task, candle_task, telem_task, maintenance_task]
-        )
+
+        # Rekorder order book. Menyimpan fitur mikrostruktur historis
+        # (OFI, depth imbalance, spread) yang TIDAK ada di database
+        # sebelumnya - `market_store` hanya menyimpan snapshot terakhir,
+        # yang hilang begitu restart.
+        #
+        # Ini bahan untuk melatih model microstructure, dan satu-satunya
+        # arah edge yang bukan time-series. Riset di research/bear.py
+        # menunjukkan edge time-series yang ada berasal dari drift
+        # bullish, bukan prediksi. Data ini yang dibutuhkan untuk
+        # menguji hipotesis itu.
+        #
+        # Kegagalan start recorder TIDAK boleh menghentikan bot:
+        # order book adalah bahan riset, bukan syarat bertransaksi.
+        self._ob_recorder = None
+        _ob_interval = float(
+            getattr(getattr(self.config, "scalping", None),
+                    "order_book_interval_s", 1.0) or 0.0)
+        if _ob_interval > 0:
+            try:
+                self._ob_recorder = OrderBookRecorder(
+                    db_path=self.config.database_path,
+                    symbols=list(getattr(self.config, "symbols", None) or []),
+                    interval_s=_ob_interval,
+                )
+                await self._ob_recorder.start()
+                step(label="Starting order book recorder")
+            except Exception as exc:  # noqa: BLE001
+                self._ob_recorder = None
+                logger.warning(
+                    "Order book recorder gagal start (%s). Bot tetap "
+                    "jalan - data mikrostruktur tidak akan terkumpul, tapi "
+                    "tidak ada order yang terganggu.", exc,
+                )
         stage_done("Trading engine berjalan")
 
         # Tahap startup selesai: kembalikan terminal ke mode normal supaya
@@ -976,6 +1011,17 @@ class TradingBotApp:
                 logger.error("Live poll loop berakhir dengan error: %s", exc)
             finally:
                 self._live_task = None
+
+        # Rekorder order book berhenti sebelum database ditutup. Urutannya penting:
+        # recorder punya koneksi SQLite sendiri yang menunjuk file yang sama,
+        # dan menutup DB aplikasi lebih dulu akan meninggalkan half-written
+        # transaction di file WAL.
+        if self._ob_recorder is not None:
+            try:
+                await self._ob_recorder.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Order book recorder gagal stop: %s", exc)
+            self._ob_recorder = None
 
         # Tutup koneksi exchange & database
         await self.price_feed.close()

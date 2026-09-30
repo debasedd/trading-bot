@@ -142,6 +142,17 @@ class ScalpingConfig:
     momentum_threshold: float = 0.0008            # 0.08% momentum 30 dtk
     max_spread_pct: float = 0.0006                # Max 0.06% spread
 
+    # ── Rekorder order book historis ──
+    #
+    # Interval pencatatan fitur mikrostruktur. 1 detik dipilih karena
+    # order flow yang menarik biasanya selesai dalam hitungan detik, dan
+    # OFI yang di-average per menit menghapus persis informasi yang dicari.
+    #
+    # 0 mematikan recorder. Ini aman: data mikrostruktur adalah bahan
+    # riset, bukan syarat bertransaksi, dan kegagalan di sini tidak boleh
+    # menghentikan bot.
+    order_book_interval_s: float = 1.0
+
     # ── Proteksi breakeven ──
     # `breakeven_trigger_pct` harus DI BAWAH `min_profit_pct`; kalau tidak,
     # `_scalp_take_profit` menutup lebih dulu dan seluruh logika ini mati.

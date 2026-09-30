@@ -198,6 +198,9 @@ scalping:
   orderbook_imbalance_threshold: 0.60  # 60% orderbook imbalance nyata
   momentum_threshold: 0.0008   # 0.08% momentum 30s nyata
   max_spread_pct: 0.0006       # Max 0.06% spread (likuiditas tinggi saja)
+  # Rekorder order book historis. 0 = mati. Aman dimatikan: ini bahan
+  # riset mikrostruktur, bukan syarat bertransaksi.
+  order_book_interval_s: 1.0
   breakeven_trigger_pct: 0.0020  # 0.20% profit -> geser SL ke breakeven
   breakeven_offset_pct: 0.0015    # 0.15% di atas/bawah entry (tutup fee roundtrip 0.10%)
   cooldown_after_close_seconds: 20.0  # Cooldown simbol setelah profit
