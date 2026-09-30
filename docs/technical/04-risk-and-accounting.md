@@ -976,3 +976,11 @@ Stated explicitly, as required.
 | "566 collected test cases" | **WRONG** | 569. |
 | Any file inventory / line count in this slice | **STALE** | re-measured: `trading/risk_manager.py` 429, `trading/position_manager.py` 577, `trading/fill_cost.py` 216, `trading/paper_engine.py` 1113, `trading/live/safety.py` 423, `trading/live/executor.py` 1061, `trading/live/engine.py` 757, `core/config.py` 1030, `config.yaml` 214. |
 | "the one-time SL/TP is anchored to the fill" applied to both regimes | **WRONG for live** | paper re-anchors (`paper_engine.py:566-567`); live does not (§4.6). |
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*

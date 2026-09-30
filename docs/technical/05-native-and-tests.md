@@ -966,3 +966,11 @@ gate model (analysis/volatility.py:384, roundtrip = taker*2 = 9.0 bps):
 - The exact `docs/context/CONTEXT.md` figure it carried for the test count (566) was located
   at lines 65, 448, 2524, 2530, 3112, 3386 and 5751 during this session; only the first three
   were read directly.
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*

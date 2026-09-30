@@ -798,3 +798,11 @@ Coverage gaps, re-derived:
   batch-close and prune — but the underlying cause was **not** diagnosed. The
   order-dependence of that file's own results across two `unittest` runs was observed, not
   explained.
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*

@@ -127,7 +127,7 @@ def create_candlestick_figure(df, symbol="BTC/USDT", trades=None):
         fig.add_trace(
             go.Scatter(
                 x=df["timestamp"], y=df["bb_upper"],
-                line=dict(color="palette.alpha(palette.INK_MUTED, 0.30)", width=1, dash="dot"),
+                line=dict(color=palette.alpha(palette.INK_MUTED, 0.30), width=1, dash="dot"),
                 name="BB Upper",
                 showlegend=False,
             ),
@@ -136,10 +136,10 @@ def create_candlestick_figure(df, symbol="BTC/USDT", trades=None):
         fig.add_trace(
             go.Scatter(
                 x=df["timestamp"], y=df["bb_lower"],
-                line=dict(color="palette.alpha(palette.INK_MUTED, 0.30)", width=1, dash="dot"),
+                line=dict(color=palette.alpha(palette.INK_MUTED, 0.30), width=1, dash="dot"),
                 name="BB Lower",
                 fill="tonexty",
-                fillcolor="palette.alpha(palette.INK_MUTED, 0.05)",
+                fillcolor=palette.alpha(palette.INK_MUTED, 0.05),
                 showlegend=False,
             ),
             row=1, col=1,
@@ -195,7 +195,7 @@ def create_candlestick_figure(df, symbol="BTC/USDT", trades=None):
         font=dict(color=palette.INK_MUTED, size=11),
         margin=dict(l=50, r=20, t=40, b=20),
         legend=dict(
-            bgcolor="palette.alpha(palette.CARD_BG, 0.80)",
+            bgcolor=palette.alpha(palette.CARD_BG, 0.80),
             bordercolor=palette.RULE,
             font=dict(size=10),
         ),

@@ -1029,3 +1029,11 @@ Two kill-switch raisers are consequently unreachable: `engine.py:128` (inside `r
 - **The economic figures attributed to §8.1** (17.0 bps round trip, realized SL 152% of the announced
   stop, R:R collapsing to ~1:1.24) appear nowhere in §8.1 (lines 715-760), which quotes only the
   four constants and the formula. Any such figures must be re-derived before they are cited.
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*

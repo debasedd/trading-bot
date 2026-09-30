@@ -923,3 +923,11 @@ route, and nothing in the repository sets them outside tests.
   persist were read from source and the call chain, not executed.
 - **Wall-clock timing claims** (0.3 s heartbeat, 500 ms HUD tick) are configuration values, not
   measured latencies.
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*

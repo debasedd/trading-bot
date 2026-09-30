@@ -18,13 +18,15 @@ Kenaikan monotonik terhadap |dx| itu penting, bukan gaya. Untuk dua token dengan
 x_a < x_b < x_exec: tinggi bus_a > tinggi bus_b. Bus_a membentang di
 [x_a, x_exec] pada y yang LEBIH TINGGI dari puncak bus_b, sedangkan
 drop vertikal token b dimulai dari bus_b. Jadi bus_a selalu melewati di
-ATAS seluruh drop yangshed-nya, dan drop b tidak pernah sampai setinggi
-bus_a. Tidak ada persilangan, secara pembuktian, bukan hopes-and-pray.
+ATAS seluruh drop yang-nya, dan drop b tidak pernah sampai setinggi
+bus_a. Tidak ada persilangan, secara pembuktian, bukan harapan.
 
 Pita token cukup tightened ke SATU baris karena tidak ada lagi baris di
-bawahnya yang harus dilewati. freeing vertically就是这么简单.
+bawahnya yang harus dilewati.
 """
 
+
+import os
 # --------------------------------------------------------------------------
 # Pita sistem
 # --------------------------------------------------------------------------
@@ -101,7 +103,35 @@ def build():
 
 
 def apply(hf):
-    """Pasang kandidat ke modul hud_figures supaya bisa diukur."""
+    """
+    Pasang kandidat ke modul hud_figures supaya bisa diukur.
+
+    Mengubah ATRIBUT modul yang sudah di-import, jadi hasilnya terlihat di
+    mana saja yang memakainya. Karena itu ada guard di bawah: tanpa itu,
+    satu `apply(hud_figures)` yang terpeleset di skrip pengukuran akan
+    mengubah geometri dashboard produksi tanpa jejak, dan tidak ada yang
+    menghitung ulang sampai chart-nya terlihat salah.
+
+    Guardian: modul target harus punya marker `LAYOUT_PRODUCTION = True`,
+    yang hanya ada di `dashboard/layouts/hud_figures.py`. Salinan di
+    `_snap/` dan modul hasil perluasan apa pun tidak punya marker itu,
+    jadi pengukuran ke kandidat tetap bisa jalan tanpa membuka pintu ke
+    produksi.
+
+    Catatan: import modul INI sendiri tidak menyentuh apa pun - semua
+    mutasi terjadi di dalam `apply()`. Itu terverifikasi lewat md5 file
+    produksi sebelum dan sesudah import.
+    """
+    if getattr(hf, "LAYOUT_PRODUCTION", False) and not os.environ.get(
+        "0XF3CE25_ALLOW_PRODUCTION_LAYOUT_PATCH"
+    ):
+        raise RuntimeError(
+            "Menolak mengubah geometri dashboard produksi. Kandidat harus "
+            "diukur terhadap salinan di data_store/_snap/, bukan modul "
+            "produksi. Kalau ini memang yang kamu mau, set "
+            "0XF3CE25_ALLOW_PRODUCTION_LAYOUT_PATCH=1 - dan rfap textures "
+            "semua figure yang sudah dibangun akan memakai geometri baru."
+        )
     nodes, edges, slots, xr, yr = build()
     hf.NEURAL_SYSTEM_NODES = dict(nodes)
     hf.NEURAL_SYSTEM_EDGES = list(edges)

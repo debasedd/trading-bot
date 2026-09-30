@@ -11,6 +11,18 @@ Semua grafik memakai data riil. Bila data absen, ditampilkan empty-state eksplis
 bukan deret sintetis atau angka hardcoded.
 """
 
+#: Penanda bahwa ini modul geometri DASHBOARD PRODUKSI, bukan salinan
+#: pengukuran. `data_store/layered.py::apply()` menolak mengubah modul yang
+#: memakai marker ini kecuali env `0XF3CE25_ALLOW_PRODUCTION_LAYOUT_PATCH`
+#: diset secara eksplisit.
+#:
+#: Alasannya bukan takhayul. `apply()` menulis ATRIBUT modul yang sudah
+#: di-import, jadi hasilnya terlihat di mana saja yang memakainya - dan
+#: tidak ada yang menghitung ulang figure yang sudah dibangun. Satu
+#: `apply()` yang terpeleset di skrip pengukuran akan mengubah chart
+#: produksi tanpa jejak.
+LAYOUT_PRODUCTION = True
+
 import math
 
 import numpy as np

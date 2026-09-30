@@ -90,7 +90,7 @@ def create_equity_chart(balance_history):
         name="Equity",
         line=dict(color=palette.BLUE, width=2),
         fill="tozeroy",
-        fillcolor="palette.alpha(palette.BLUE, 0.10)",
+        fillcolor=palette.alpha(palette.BLUE, 0.10),
     ))
 
     fig.add_trace(go.Scatter(
@@ -106,7 +106,7 @@ def create_equity_chart(balance_history):
         plot_bgcolor=palette.PAPER_BG,
         margin=dict(l=50, r=20, t=10, b=30),
         font=dict(color=palette.INK_MUTED, size=11),
-        legend=dict(bgcolor="palette.alpha(palette.CARD_BG, 0.80)", bordercolor=palette.RULE),
+        legend=dict(bgcolor=palette.alpha(palette.CARD_BG, 0.80), bordercolor=palette.RULE),
         yaxis=dict(gridcolor=palette.CARD_BG, title="USDT"),
         xaxis=dict(gridcolor=palette.CARD_BG),
     )
@@ -144,7 +144,7 @@ def create_drawdown_chart(balance_history):
         name="Drawdown",
         line=dict(color=palette.RED, width=1.5),
         fill="tozeroy",
-        fillcolor="palette.alpha(palette.RED, 0.15)",
+        fillcolor=palette.alpha(palette.RED, 0.15),
     ))
 
     fig.update_layout(

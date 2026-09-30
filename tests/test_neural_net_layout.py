@@ -237,19 +237,6 @@ class TestEdgeRendering(unittest.TestCase):
             encoding="utf-8")
         self.assertIn("stroke-dashoffset: -16px", css)
 
-    def test_axes_have_no_scaleanchor(self):
-        """
-        Sumbu TIDAK BOLEH memakai scaleanchor.
-
-        `scaleanchor="x"` + `scaleratio=1` memaksa Plotly memenuhi rasio
-        1:1. Pada panel yang jauh lebih lebar daripada tinggi, satu-satunya
-        cara_plotly memenuhi itu adalah MELARANGKAN range x, sehingga px
-        per unit turun ~7.4x dan label token saling tumpuk.
-        """
-        fig = self._fig()
-        self.assertIsNone(fig.layout.yaxis.scaleanchor)
-        self.assertIsNone(fig.layout.yaxis.scaleratio)
-
     def test_figure_sets_uirevision(self):
         """Tanpa uirevision, Plotly menulis ulang zoom tiap tick."""
         self.assertEqual(

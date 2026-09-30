@@ -2231,3 +2231,11 @@ Every first-party import edge that crosses a group boundary, in group order. 127
 | Paper trading engine | 1 | 1113 | config, data/ui, infra, trading | — |
 | Live trading path | 6 | 4057 | config, data/ui, infra, trading | — |
 | Data, persistence, UI and native code | 26 | 9375 | config, infra, signal | decision, live, paper, sense, trading |
+
+
+---
+
+*Dokumen ini mengoreksi klaim dari `docs/context/ARCHIVED-2026-09-28.md`
+(selama ini `docs/context/CONTEXT.md`). Berkas itu sudah diarsipkan dan
+ditandai usang; nama lamanya tidak lagi dipakai supaya tidak ada dua
+sumber kebenaran untuk hal yang sama.*
