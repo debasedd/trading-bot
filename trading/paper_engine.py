@@ -17,7 +17,7 @@ from database.db import get_db
 from database.repository import Repository
 from database.models import AgentLog
 from trading.models import Order, TradeAction, Side
-from trading.risk_manager import RiskManager
+from trading.risk_manager import RiskManager, NON_SCALP_SL_PCT, NON_SCALP_TP_PCT
 from trading.fill_cost import (
     FILL_BOOK_MALFORMED_SPREAD_PCT,
     FILL_HALF_SPREAD_FLOOR,
@@ -545,8 +545,12 @@ class PaperTradingEngine:
                     "details": {"gate": "volatility", **gate_err.meta},
                 }
         else:
-            sl_pct = 0.02
-            tp_pct = 0.04
+            # Dari `trading.risk_manager` - satu tempat kebenaran yang
+            # dipakai `DecisionAgent` juga untuk sizing. Dulu literal ini
+            # di-hardcode di kedua file dengan komentar yang saling menunjuk,
+            # sehingga mengubah satu sisi tidak pernah mengubah yang lain.
+            sl_pct = NON_SCALP_SL_PCT
+            tp_pct = NON_SCALP_TP_PCT
             vol_meta = {}
 
         # ── Biaya menyeberang, digeser ke harga ──────────────────────────

@@ -25,18 +25,25 @@ logger = get_logger("decision_agent")
 
 # SL/TP untuk sizing saat scalping dimatikan.
 #
-# Salinan literal dari `PaperTradingEngine._execute_open`
-# (trading/paper_engine.py:477-478). Angka itu di-hardcode di sana dan TIDAK
-# boleh diganti dengan `stop_loss_pct` dari config: kalau sizing memakai SL
-# berjarak 0.25% sementara SL yang benar-benar dipasang 2%, notionalnya
-# meledak 8x dan risiko sebenarnya jauh lebih besar dari yang disetujui
-# risk manager.
+# Fallback SL/TP untuk mode NON-scalping (analisis/volume, bukan momentum).
 #
-# Konsekuensi salinan ini: kedua sisi harus diubah bersama. `paper_engine.py`
-# berada di luar cakupan pekerjaan ini, jadi perubahan ke sana harus
-# dicocokkan manual.
-_NON_SCALP_SL_PCT = 0.02
-_NON_SCALP_TP_PCT = 0.04
+# Angka ini TIDAK boleh diganti dengan `tight_sl_pct` dari config: kalau
+# sizing memakai SL berjarak 0.25% sementara SL yang benar-benar dipasang 2%,
+# notionalnya meledak 8x dan risiko sebenarnya jauh lebih besar dari yang
+# disetujui risk manager.
+#
+# Dulu angka ini DIHARDCODE di dua tempat - di sini dan di
+# `PaperTradingEngine._execute_open` (trading/paper_engine.py) - dengan
+# komentar yang saling menunjuk. Itu pola yang pasti gagal: satu hari
+# seseorang mengubah satu sisi dan tidak sadar yang lain sudah stale.
+#
+# Sekarang `trading/risk_manager.py` yang memiliki keduanya, dan kedua file
+# mengimpornya. Satu tempat kebenaran, dan mengubahnya mengubah kedua
+# jalur sekaligus.
+from trading.risk_manager import (
+    NON_SCALP_SL_PCT as _NON_SCALP_SL_PCT,
+    NON_SCALP_TP_PCT as _NON_SCALP_TP_PCT,
+)
 
 
 class DecisionAgent(BaseAgent):

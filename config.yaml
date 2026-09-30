@@ -132,12 +132,54 @@ logging:
 # --- Mode Scalping (Optimasi Profitabilitas) ---
 scalping:
   enabled: true
-  min_profit_pct: 0.0060       # 0.60% min profit (harus > breakeven_trigger_pct)
-  max_hold_seconds: 300        # 5 menit max hold untuk membiarkan posisi berkembang
+  # --- NILAI INI DIUKUR, BUKAN DITEBAK ---
+  #
+  # Dari 304 trade paper di backup 20260925 (analisis di
+  # docs/technical/04-risk-and-accounting.md dan research/):
+  #
+  #   median winner  +0.377%   (bukan 0.60% seperti tertulis di sini)
+  #   median loser   -0.366%   (bukan 0.25% seperti tertulis di sini)
+  #   median hold      46 detik
+  #
+  # Dua kebohongan di config lama:
+  #   * tight_sl_pct 0.0025 TIDAK PERNAH dipakai. 118 dari 123 SL_HIT
+  #     punya jarak 0.35-0.45% karena dynamic_tp_sl menimpanya. Stop
+  #     yang sebenarnya ~1.5x lebih lebar dari yang tertulis.
+  #   * min_profit_pct = fast_tp_pct = 0.0060 = take_profit. Tiga knob
+  #     yang Collapse jadi satu. Karena median hold 46 detik, harga
+  #     tidak pernah sempat bergerak 0.60% - jadi 88% winner ditutup
+  #     oleh SCALP_TP di ~0.39%. Winner menangkap 2/3 dari yang ditulis.
+  #
+  # Akibatnya risk:reward efektif 1:1, bukan 1:2.4 yang tertulis. Dan
+  # biaya 17 bps per round trip = 0.17% adalah 68% dari SL 0.25%, jadi
+  # stop sekecil itu tidak pernah bisa menutup biaya - bahkan dengan
+  # winrate 100%.
+  #
+  # Nilai di bawah memakai angka yang benar-benar terjadi, bukan yang
+  # terlihat rapi. Cost floor: SL harus >= ~0.35% atau tidak ada yang
+  # bisa impas.
+  # `min_profit_pct` ADALAH target exit yang sebenarnya - bukan ambang
+  # trigger terpisah. `ExecutionAgent._scalp_take_profit` (agents/
+  # execution_agent.py:310) menutup di `profit_pct >= min_profit_pct`, dan
+  # `core/config.py::_validate_scalping_economics` menolak config di mana
+  # nilai ini tidak mengalahkan SL setelah fee. Jadi mengaturnya di bawah
+  # SL membuat bot boot gagal, dan itu benar.
+  #
+  # SL 0.40% + TP 0.30% tidak bisa impas: fee round trip 0.09% membuat
+  # net TP 0.21% vs net SL 0.49%, butuh win rate 70%. Di sinilah
+  # validator booted redup selama ini - tidak pernah terpakai karena
+  # min_profit_pct == fast_tp_pct == 0.60% membuatnya selalu lolos.
+  min_profit_pct: 0.0060       # 0.60% - di atas SL setelah fee, diverifikasi
+                               # oleh validator saat boot
+  max_hold_seconds: 900        # 15 menit, bukan 5. Median hold 46s tapi
+                               # p90 jauh di atas 5 menit; 300s memotong
+                               # posisi yang sedang berjalan
   min_hold_seconds: 15         # Min 15 detik untuk menghindari whipsaw spread
   batch_size: 2                # 2 posisi berkualitas per siklus (bukan spam)
-  fast_tp_pct: 0.0060          # 0.60% take profit (+0.50% net setelah fee)
-  tight_sl_pct: 0.0025         # 0.25% stop loss (-0.35% net setelah fee)
+  fast_tp_pct: 0.0060          # 0.60% take profit (dipakai untuk reasoning
+                               # agent, bukan untuk exit aktual)
+  tight_sl_pct: 0.0040         # 0.40% stop - di atas cost floor 0.17%,
+                               # dan cocok dengan median SL_HIT terukur
   min_confidence: 0.40         # Min 40% confidence (filter sinyal sampah)
   # Ambang MEMBALIKKAN posisi yang sedang berjalan. Sengaja > min_confidence:
   # membuka pada sinyal lemah wajar, membalik posisi aktif butuh bukti lebih
@@ -178,7 +220,11 @@ dynamic_tp_sl:
   enabled: true
   atr_multiple: 1.5           # Beri ruang 1.5x range rata-rata menit
   atr_period: 14              # Wilder smoothing, sama seperti pandas-ta atr
-  min_sl_pct: 0.0025          # 0.25% — pagar bawah, sama dengan SL statis
+  # Pagar bawah WAJIB sama dengan scalping.tight_sl_pct. Kalau tidak,
+  # ATR meng-override SL statis dan config jadi berbohong - yang
+  # terjadi di config lama: tight_sl_pct 0.0025 tapi 118 dari 123
+  # SL_HIT berakhir di 0.35-0.45%.
+  min_sl_pct: 0.0040          # 0.40% - sinkron dengan tight_sl_pct
   max_sl_pct: 0.0150          # 1.50% — pagar atas keras
   min_risk_reward: 1.5        # TP >= 1.5 x SL, selalu
   realized_window_seconds: 30.0

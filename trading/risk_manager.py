@@ -17,6 +17,22 @@ PRICE_QUANT = Decimal("0.00000001")
 MONEY_QUANT = Decimal("0.01")
 QTY_QUANT = Decimal("0.00001")
 
+# ── SL/TP fallback untuk mode NON-scalping ─────────────────────────
+#
+# Angka ini adalah SL/TP yang dipasang `PaperTradingEngine._execute_open`
+# dan dihitung `DecisionAgent` untuk sizing ketika `scalping.enabled` false.
+# Keduanya harus identik: kalau sizing memakai SL 2% sementara engine
+# memasang SL 0.25%, notional meledak 8x dan risiko sebenarnya jauh
+# lebih besar dari yang disetujui risk manager.
+#
+# Dulu nilai ini DIHARDCODE di kedua file dengan komentar yang saling
+# menunjuk - pola yang pasti gagal, karena mengubah satu sisi tidak
+# pernah mengubah yang lain dan tidak ada yang mengeluh. Sekarang modul
+# ini yang memiliki keduanya, jadi mengubahnya mengubah kedua jalur
+# sekaligus. `agents/decision_agent.py` mengimpornya dari sini.
+NON_SCALP_SL_PCT = 0.02
+NON_SCALP_TP_PCT = 0.04
+
 
 class RiskManager:
     """
