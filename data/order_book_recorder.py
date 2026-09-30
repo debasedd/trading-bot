@@ -68,9 +68,20 @@ logger = get_logger("ob_recorder")
 #: Skema tabel. `CREATE TABLE IF NOT EXISTS` jadi aman dipanggil ulang.
 #: `PRAGMA` di bawah dieksekusi per-koneksi, bukan per-tabel, karena
 #: WAL dan sinkronisasi adalah properti database.
+#:
+#: `busy_timeout` itu WAJIB, bukan opsional. File ini bukan database milik
+#: rekorder sendiri - `database_path` yang sama dipakai `Database`
+#: (aiosqlite) untuk candles, positions, trades. Dua koneksi menulis ke
+#: file yang sama, jadi sqlite bisa mengunci. Tanpa `busy_timeout`,
+#: `sqlite3.OperationalError: database is locked` langsung dilempar dan
+#: TIK ITU HILANG - bukan hanya tertunda.
+#:
+#: Terukur: 69 dari ~1300 tick hilang dengan "database is locked" sebelum
+#: baris ini ada. Itu 5% data hilang tanpa satu error pun terlihat di
+#: tempat lain.
 SCHEMA = """
+PRAGMA busy_timeout=15000;
 PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
 
 -- Agregat per interval. Baris ini yang dipakai untuk latihan model.
 CREATE TABLE IF NOT EXISTS order_book_features (
@@ -145,6 +156,12 @@ CREATE INDEX IF NOT EXISTS idx_obr_symbol_time
 """
 
 
+#: Berapa kali percobaan ulang sebelum menyerah pada write yang terkunci.
+#: 3 percobaan dengan backoff 8/16/32ms menutup hampir semua konflik
+#: tanpa menunda loop lebih dari ~60ms.
+_WRITE_RETRIES = 3
+
+
 class OrderBookRecorder:
     """
     Rekam order book dari `market_store` ke SQLite pada interval tetap.
@@ -178,6 +195,10 @@ class OrderBookRecorder:
             "skipped_no_book": 0,
             "skipped_thin": 0,
             "errors": 0,
+            # Berapa kali retry lock benar-benar habis. Kalau ini naik,
+            # berarti data yang hilang bukan karena lock sesaat tapi
+            # karena ada proses lain yang menahan file terlalu lama.
+            "lock_retries_exhausted": 0,
         }
 
     # ── Lifecycle ────────────────────────────────────────────────
@@ -267,31 +288,69 @@ class OrderBookRecorder:
                     float(book.get("spread") or 0.0),
                 ))
 
-        if rows:
-            self._db.executemany(
-                """INSERT INTO order_book_features
-                   (timestamp, symbol, best_bid, best_ask, mid_price,
-                    spread, spread_pct, bid_size, ask_size, top_imbalance,
-                    bid_depth, ask_depth, depth_imbalance, ofi,
-                    levels_bid, levels_ask)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                rows,
-            )
-            self._stats["snapshots"] += len(rows)
+        # `order_book_features` DAN `order_book_raw` ditulis dalam satu
+        # transaksi, lalu di-commit sekali. Dua commit terpisah berarti dua
+        # write lock berurutan pada file yang juga dipakai Database
+        # aiosqlite, dan lock kedua kadang tertahan sampai timeout.
+        self._write(rows, raw_rows, cutoff)
 
-        if raw_rows:
-            self._db.executemany(
-                "INSERT INTO order_book_raw (timestamp, symbol, bids, asks, spread)"
-                " VALUES (?,?,?,?,?)",
-                raw_rows,
-            )
-            # Prune raw: table ini hanya berguna 5 menit terakhir.
-            # Tanpa prune, ia tumbuh tanpa batas dan tidak pernah dibaca.
-            self._db.execute("DELETE FROM order_book_raw WHERE timestamp < ?",
-                             (cutoff,))
+    def _write(self, rows, raw_rows, cutoff) -> None:
+        """
+        Tulis features + raw dalam satu transaksi, dengan retry.
 
-        if rows or raw_rows:
-            self._db.commit()
+        Retry itu perlu karena `busy_timeout` menambah cara SQLite
+        MEMBAWAKAN lock, tapi tidak menjamin: pada konflik tinggi,
+        `SQLITE_BUSY` masih bisa muncul. Tanpa retry, satu tick hilang
+        - dan tick hilang berarti satu baris data hilang, tanpa jejak.
+        """
+        if not rows and not raw_rows:
+            return
+
+        for attempt in range(_WRITE_RETRIES):
+            try:
+                if rows:
+                    self._db.executemany(
+                        """INSERT INTO order_book_features
+                           (timestamp, symbol, best_bid, best_ask, mid_price,
+                            spread, spread_pct, bid_size, ask_size,
+                            top_imbalance, bid_depth, ask_depth,
+                            depth_imbalance, ofi, levels_bid, levels_ask)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        rows,
+                    )
+                if raw_rows:
+                    self._db.executemany(
+                        "INSERT INTO order_book_raw "
+                        "(timestamp, symbol, bids, asks, spread)"
+                        " VALUES (?,?,?,?,?)",
+                        raw_rows,
+                    )
+                    # Prune raw dalam transaksi yang sama, supaya tidak
+                    # perlu write lock kedua.
+                    self._db.execute(
+                        "DELETE FROM order_book_raw WHERE timestamp < ?",
+                        (cutoff,),
+                    )
+                self._db.commit()
+                if rows:
+                    self._stats["snapshots"] += len(rows)
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) and "busy" not in str(exc):
+                    raise
+                # Rollback dulu supaya transaksi setengah jadi tidak
+                # menahan lock untuk penulisan berikutnya.
+                try:
+                    self._db.rollback()
+                except sqlite3.Error:
+                    pass
+                if attempt == _WRITE_RETRIES - 1:
+                    self._stats["lock_retries_exhausted"] += 1
+                    raise
+                # Backoff eksponensial, kecil. 8ms, 16ms, 32ms - cukup
+                # untuk lock yang sudah hampir selesai, dan tidak menunda
+                # loop lebih dari yang perlu.
+                time.sleep(0.008 * (2 ** attempt))
 
     def _features(self, symbol: str, book: dict,
                   now_ms: int) -> Optional[tuple]:

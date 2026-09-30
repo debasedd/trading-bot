@@ -102,6 +102,13 @@ _EXEC_FAIL_CRITICAL = 100
 # Lima detik menutup kedua kasus tanpa menahan operator.
 _LIVE_TASK_SHUTDOWN_TIMEOUT = 5.0
 
+# Database terpisah untuk rekorder order book. Bot menulis ke
+#  dari belasan task, dan SQLite hanya mengizinkan satu
+# writer - rekorder di file yang sama kehilangan 82% tick-nya.
+# Plus: data ini lebih besar dan tidak pernah dibaca saat runtime, jadi
+# mencampurkannya dengan ledger transaksi hanya memperlambat order.
+ORDER_BOOK_DB_PATH = "data_store/order_book.db"
+
 
 def _print_safe(text: str):
     """
@@ -930,6 +937,18 @@ class TradingBotApp:
         #
         # Kegagalan start recorder TIDAK boleh menghentikan bot:
         # order book adalah bahan riset, bukan syarat bertransaksi.
+        #
+        # FILE TERPISAH, bukan `self.config.database_path`. Bot ini punya
+        # belasan task yang menulis ke DB yang sama (candles, positions,
+        # trades, agent_logs, snapshots) dan SQLite hanya mengizinkan satu
+        # writer. Terukur: file bersamasolidar menolak 82% tick rekorder
+        # dengan "database is locked" - 1000 baris per 100 detik, yang
+        # sampai 180.
+        #
+        # Data order book juga punya siklus hidup berbeda: ukurannya jauh
+        # lebih besar, dan tidak pernah dibaca runtime bot. Mencampurkannya
+        # dengan ledger transaksi berarti rekorder ikut memperlambat
+        # setiap order - untuk sesuatu yang tidak dibutuhkan saat runtime.
         self._ob_recorder = None
         _ob_interval = float(
             getattr(getattr(self.config, "scalping", None),
@@ -937,7 +956,7 @@ class TradingBotApp:
         if _ob_interval > 0:
             try:
                 self._ob_recorder = OrderBookRecorder(
-                    db_path=self.config.database_path,
+                    db_path=ORDER_BOOK_DB_PATH,
                     symbols=list(getattr(self.config, "symbols", None) or []),
                     interval_s=_ob_interval,
                 )
