@@ -105,6 +105,8 @@ class Series:
     ema21: List[float] = field(default_factory=list)
     mom21: List[float] = field(default_factory=list)
     vol_ratio: List[float] = field(default_factory=list)
+    # 1 kalau harga di atas EMA50, 0 kalau tidak. Dipakai filter regime.
+    trend_up: List[int] = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.c)
@@ -139,6 +141,8 @@ def load(min_bars: int = 500) -> Dict[str, Series]:
         for i in range(21, len(c)):
             if c[i - 21] > 0:
                 s.mom21[i] = (c[i] - c[i - 21]) / c[i - 21] * 100.0
+        e50 = ema_series(c, 50)
+        s.trend_up = [1 if (c[i] > e50[i] and c[i] > 0) else 0 for i in range(len(c))]
         s.vol_ratio = [1.0] * len(c)
         if len(v) > 60:
             avg = sum(v[-60:]) / 60.0
@@ -436,6 +440,7 @@ def _slice(s: Series, a: int, b: int) -> Series:
         rsi14=s.rsi14[a:b], atr14=s.atr14[a:b],
         ema9=s.ema9[a:b], ema21=s.ema21[a:b],
         mom21=s.mom21[a:b], vol_ratio=s.vol_ratio[a:b],
+        trend_up=s.trend_up[a:b] if s.trend_up else [],
     )
 
 
