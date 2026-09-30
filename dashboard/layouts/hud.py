@@ -282,7 +282,7 @@ TREE_STAGES = ["feed", "scan", "sense", "gate", "exec", "outcome"]
 
 def create_symbol_pnl_panel() -> html.Div:
     """
-    PnL per simbol - siapa yang实施方案 meng能和 dan siapa yang bikin rugi.
+    PnL per simbol - siapa yang implementasi dan siapa yang bikin rugi.
 
     Panel ini menggantikan "Strategy Decision Tree" yang sebelumnya hanya
     menampilkan 6 kotak statis dengan badge "6/6 COMPLETE" - jawaban yang

@@ -463,7 +463,15 @@ class TradingBotApp:
                     candles = await self.price_feed.fetch_ohlcv(symbol, timeframe=tf, limit=limit_count, save_to_db=True)
                     logger.info(f"Lilin awal {symbol} ({tf}): {len(candles)} candle tersimpan")
                 except Exception as e:
-                    logger.warning(f"Gagal prefetch {symbol} {tf}: {e}")
+                    # Prefetch gagal tidak menghentikan bot - harga tetap
+                    # mengalir lewat websocket dan candle akan dibangun
+                    # dari situ. Tapi penyebabnya tidak selalu jelas, jadi
+                    # traceback ikut: "gagal prefetch" tanpa jejak tidak
+                    # bisa dibedakan dari outage feed.
+                    logger.warning(
+                        "Gagal prefetch %s %s: %s", symbol, tf, e,
+                        exc_info=True,
+                    )
                 done += 1
                 step(label=f"Fetching {symbol.split('/')[0]} {tf}")
 
@@ -491,7 +499,7 @@ class TradingBotApp:
         except Exception as e:
             # Kegagalan prune tidak boleh menjatuhkan sistem: penuhnya disk
             # adalah masalah operasional, bukan alasan berhenti bertransaksi.
-            logger.warning(f"Prune snapshot arah gagal: {e}")
+            logger.warning("Prune snapshot arah gagal: %s", e, exc_info=True)
 
     async def _prune_agent_logs(self):
         """
@@ -507,7 +515,12 @@ class TradingBotApp:
             await repo.prune_agent_logs(keep=keep)
             logger.debug(f"Prune agent_logs selesai (keep {keep})")
         except Exception as e:
-            logger.warning(f"Prune agent_logs gagal: {e}")
+            # Sama seperti prune snapshot: kegagalan di sini adalah
+            # masalah operasional, bukan alasan berhenti bertransaksi.
+            # Traceback ikut karena "gagal prune" tanpa jejak akan
+            # terlihat seperti tabel yang tumbuh sendiri - dan gejala itu
+            # berbeda dari penyebabnya.
+            logger.warning("Prune agent_logs gagal: %s", e, exc_info=True)
 
     async def _maintenance_loop(self):
         """

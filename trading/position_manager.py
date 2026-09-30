@@ -20,7 +20,7 @@ from database.repository import Repository
 from database.models import Position, Trade, BalanceSnapshot
 from trading.risk_manager import RiskManager
 from trading.models import Side, CloseReason
-from trading.fill_cost import close_fill_price, describe_cost, funding_cost
+from trading.fill_cost import close_fill_price, funding_cost
 
 logger = get_logger("position_manager")
 
