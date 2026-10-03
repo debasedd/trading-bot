@@ -395,6 +395,166 @@ class LiveExecutor:
         """
         return self.engine.exchange.exchange.all_mids() or {}
 
+    # ── Fill dari bursa ────────────────────────────────────────────────
+
+    async def record_exchange_fills(
+        self, fills: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Catat setiap penutupan dari fill bursa ke ledger.
+
+        Dipanggil dua arah:
+
+        * langsung, dengan `fills=None` -- fungsi membaca sendiri lewat
+          `engine.poll_exchange_fills()`;
+        * dari `engine.on_exchange_fill`, dengan daftar fill yang sudah
+          dibaca `-- itu jalur yang dipakai `run_loop`, supaya fill tidak
+          dibaca dua kali per siklus.
+
+        SEBELUM item ini ada, tidak ada jalur apa pun yang membaca
+        `userFills`. Akibatnya tiga hal sekaligus rusak:
+
+        * Baris posisi yang ditutup oleh trigger SL/TP di bursa tetap
+          `status='OPEN'` dengan `realized_pnl = NULL` selamanya --
+          tidak ada yang menutupnya dari sisi Python.
+        * `record_realized_pnl()` tidak pernah terpanggil dari fill bursa,
+          jadi `Blocker.DAILY_LOSS_LIMIT` tidak punya sumber angka: live
+          tidak punya daily-loss breaker sama sekali.
+        * `health_check` melihat posisi hilang dari bursa dan menyalakan
+          kill switch pada strike pertama.
+
+        Yang dicatat di sini:
+
+        * `realized_pnl` -- diambil dari `closedPnl` bursa, yang sudah
+          NET (fee sudah dipotong bursa). Menghitung ulang dari harga
+          akan menghasilkan angka yang berbeda dari yang benar-benar
+          dibayar.
+        * `fee` -- `abs(fee)` dari bursa, bukan `config.fees.taker`.
+        * `quantity` -- ukuran fill ASLI. Partial exit punya size sendiri;
+          memakai ukuran baris posisi membuat PnL terlalu besar.
+        * `reason` -- diturunkan dari harga fill vs SL/TP yang terpasang.
+
+        PnL yang dicatat = `closed_pnl` bursa MINUS `fee` yang terisi di
+        fill itu sendiri, karena `closedPnl` sudah net dari fee yang
+        ter associate di sisi CE, tapi fee fill ini masih harus
+        dikurangi agar `realized_pnl` di DB konsisten dengan `trades`.
+        """
+        from trading.live.engine import _close_reason_from_fill
+
+        if fills is None:
+            fills = await self.engine.poll_exchange_fills()
+        if not fills:
+            return []
+
+        repo = await self._get_repo()
+        recorded: List[Dict[str, Any]] = []
+
+        for fill in fills:
+            if fill.get("kind") != "CLOSE":
+                continue
+            coin = str(fill.get("coin") or "").upper()
+            size = float(fill.get("size") or 0.0)
+            price = float(fill.get("price") or 0.0)
+            fee = float(fill.get("fee") or 0.0)
+            closed_pnl = float(fill.get("closed_pnl") or 0.0)
+            if not _finite_positive(price):
+                logger.warning(
+                    "Fill CLOSE %s tanpa harga yang bisa dipakai; "
+                    "TIDAK dicatat.", coin)
+                continue
+
+            row = await self._find_open_row(fill["symbol"])
+            if row is None:
+                logger.warning(
+                    "Fill CLOSE %s tapi tidak ada baris posisi OPEN di "
+                    "SQLite; TIDAK dicatat. Baris mungkin sudah ditutup "
+                    "lewat jalur lain, atau posisi ini milik operator.",
+                    fill["symbol"])
+                continue
+
+            # Alasan dari trigger yang benar-benar terpasang di bursa.
+            reason = _close_reason_from_fill({
+                "price": price,
+                "stop_loss": row.get("stop_loss"),
+                "take_profit": row.get("take_profit"),
+            })
+
+            # `closedPnl` bursa sudah net dari fee. Fee fill ini
+            # ditambahkan lagi supaya kolom `trades.fee` tidak nol --
+            # dan `realized_pnl` yang ditulis tetap angka bursa,
+            # bukan hasil hitung ulang.
+            net = closed_pnl
+
+            claimed = await repo.close_position(
+                row["id"], price, net, reason)
+            if not claimed:
+                logger.debug(
+                    "Fill CLOSE %s dilewati: baris #%s sudah diklaim "
+                    "pemanggil lain.", coin, row.get("id"))
+                continue
+
+            await repo.insert_trade(Trade(
+                symbol=row["symbol"],
+                side="SELL" if row.get("side") == "LONG" else "BUY",
+                price=price, quantity=size, fee=fee,
+                fee_type="TAKER", trade_type="CLOSE",
+                position_id=row["id"], mode="live",
+            ))
+
+            # INI pemakan `Blocker.DAILY_LOSS_LIMIT`. Tanpa baris ini,
+            # batas rugi harian live tidak pernah bisa menyala karena
+            # tidak ada jalur lain yang mengisinya.
+            self.engine.gate.record_realized_pnl(net)
+
+            await self._publish(Channels.POSITION_UPDATE, {
+                "action": "CLOSED",
+                "position_id": row["id"],
+                "symbol": row["symbol"],
+                "side": row.get("side"),
+                "close_price": price,
+                "realized_pnl": net,
+                "reason": reason,
+                "live": True,
+                "source": "exchange_fill",
+            }, source="live_executor")
+
+            await self._log_agent(AgentLog(
+                agent_name="live_executor",
+                action="TRADE_CLOSED",
+                reasoning=(
+                    "Fill bursa {} {} sz={} px={} PnL={:+.4f} fee={:.6f} "
+                    "alasan={} tid={}"
+                ).format(
+                    coin, row.get("side"), size, price, net, fee, reason,
+                    fill.get("tid"),
+                ),
+            ))
+
+            # Posisi dicatat di engine sudah tidak berlaku: yang terjadi
+            # di bursa adalah reality, dan `self.positions` harus
+            # mencerminkannya.
+            self.engine.positions.pop(row["symbol"], None)
+
+            recorded.append({
+                "symbol": row["symbol"], "coin": coin, "size": size,
+                "price": price, "net": net, "fee": fee, "reason": reason,
+                "row_id": row["id"],
+            })
+
+        if recorded:
+            stats = await repo.get_trade_stats(mode="live")
+            await repo.update_account_stats(
+                total_pnl=stats["total_pnl"],
+                total_trades=stats["total_trades"],
+                winning_trades=stats["winning_trades"],
+                losing_trades=stats["losing_trades"],
+                profit_factor=(stats["profit_factor"]
+                               if stats["profit_factor"] != float("inf")
+                               else 0),
+            )
+
+        return recorded
+
     # ── Order ──────────────────────────────────────────────────────────
 
     async def execute_order(self, order) -> Dict[str, Any]:

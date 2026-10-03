@@ -337,6 +337,17 @@ class TradingBotApp:
             """Placeholder: agent sudah pushes order lewat event bus."""
             return None
 
+        # Executor dibuat DULU, lalu disambungkan ke engine.
+        #
+        # Urutan ini bukan pilihan gaya: `poll_exchange_fills()` membaca
+        # fill dari bursa, dan tanpa executor yang mencatatnya, fill itu
+        # hanya dibaca lalu dibuang -- baris posisi tetap OPEN,
+        # `realized_pnl` tidak pernah terisi, dan `DAILY_LOSS_LIMIT`
+        # tidak punya sumber angka. `engine.poll_exchange_fills` memanggil
+        # `on_exchange_fill` setiap kali menemukan fill CLOSE.
+        executor = LiveExecutor(engine, self.event_bus)
+        engine.on_exchange_fill = executor.record_exchange_fills
+
         self._live_task = asyncio.create_task(
             engine.run_loop(interval=5.0, on_decision=_decide))
         self._live_engine_obj = engine
@@ -344,7 +355,7 @@ class TradingBotApp:
         # jadi no-op dan live fill tidak pernah sampai ke HUD. `ExecutionAgent`
         # dan `PaperTradingEngine` dibangun dengan bus yang sama di bawah,
         # jadi tiga jalur ini berpublikasi ke tempat yang satu.
-        return LiveExecutor(engine, self.event_bus)
+        return executor
 
     async def initialize(self):
         """Inisialisasi semua subsistem."""

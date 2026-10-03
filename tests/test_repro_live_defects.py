@@ -288,106 +288,26 @@ class TestReconcileSymbolKeyMismatch(unittest.IsolatedAsyncioTestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 
-@known_broken("DEFECT-3 health_check latch saat fill normal")
-class TestHealthCheckLatchesOnNormalFill(unittest.IsolatedAsyncioTestCase):
-    """Reproduksi: fill SL/TP normal tidak boleh menghentikan bot."""
-
-    def _engine_with_stale_local_position(self, exchange_factory):
-        ex = exchange_factory()
-        engine = LiveEngine(gate=clean_gate(), exchange=ex, cfg=LiveConfig())
-        engine.positions["BTC/USDT:USDT"] = LivePosition(
-            symbol="BTC/USDT:USDT", coin="BTC", side="SHORT", size=0.24567,
-            entry_price=85110.1, stop_loss=86000.0, take_profit=83000.0,
-            leverage=5, sl_order_id=1, tp_order_id=2,
-        )
-        return engine
-
-    async def test_take_profit_fill_does_not_trip_kill_switch(self):
-        """
-        Posisi hilang dari bursa karena TP fires = BERHASIL, bukan
-        kegagalan.
-        """
-        engine = self._engine_with_stale_local_position(
-            lambda: make_exchange_with_state(CLEARINGHOUSE_STATE_EMPTY, "BTC")
-        )
-        health = await engine.health_check()
-        self.assertFalse(
-            engine.gate.engaged,
-            "kill switch menyala setelah take-profit normal: %s"
-            % health["problems"],
-        )
-        self.assertTrue(health["ok"], "health check gagal: %s" % health["problems"])
-
-    async def test_stop_loss_fill_does_not_trip_kill_switch(self):
-        """
-        Sama untuk SL -- hasilnya juga penutupan yang berhasil.
-        """
-        engine = self._engine_with_stale_local_position(
-            lambda: make_exchange_with_state(CLEARINGHOUSE_STATE_EMPTY, "BTC")
-        )
-        health = await engine.health_check()
-        self.assertFalse(
-            engine.gate.engaged,
-            "kill switch menyala setelah stop-loss normal: %s" % health["problems"],
-        )
-
-    async def test_resting_order_without_position_does_not_trip_kill_switch(self):
-        """
-        Order GTC yang belum terisi tidak punya LivePosition -- itu definisi
-        dari order resting, bukan kondisi error.
-
-        health_check:624-628 menandainya sebagai problem, dan problem
-        apa pun memanggil engage_kill_switch.
-        """
-        from hyperliquid_fixtures import make_info_double
-
-        class _ExchangeWithRestingOrder:
-            """
-            Bursa dengan satu order GTC yang belum terisi.
-
-            Bentuk order disalin dari apa yang frontendOpenOrders bursa
-            kirimkan: field numerik berupa string desimal, `orderType`
-            "Limit", `tif` "Gtc". Eksposisi di bursa kosong -- order
-            resting tanpa posisi adalah kondisi yang harus diuji.
-            """
-
-            def __init__(self):
-                self.info = make_info_double(CLEARINGHOUSE_STATE_EMPTY)
-
-            def open_orders(self):
-                return [{
-                    "coin": "ETH",
-                    "limitPx": "3000.0",
-                    "sz": "1.0",
-                    "side": "B",
-                    "oid": 123456789,
-                    "cloid": None,
-                    "orderType": "Limit",
-                    "tif": "Gtc",
-                    "reduceOnly": False,
-                    "triggerPx": None,
-                }]
-
-            def positions(self):
-                return []
-
-            def frontend_open_orders(self, address):
-                return self.open_orders()
-
-            def user_state(self, address, dex=""):
-                return CLEARINGHOUSE_STATE_EMPTY
-
-        engine = LiveEngine(
-            gate=clean_gate(), exchange=_ExchangeWithRestingOrder(),
-            cfg=LiveConfig(),
-        )
-        health = await engine.health_check()
-        self.assertFalse(
-            engine.gate.engaged,
-            "kill switch menyala karena ada order GTC yang belum terisi: %s"
-            % health["problems"],
-        )
-
+# ═══════════════════════════════════════════════════════════════════
+# DEFECT 3 — SUDAH DIPERBAIKAN di item (b) Fase 1.
+#
+# Ketiga reproduksinya (SL fill, TP fill, order resting) sekarang hijau.
+# Versinya yang lebih lengkap ada di:
+#
+#   tests/test_fill_reconciliation.py
+#     TestHealthCheckAcceptsExchangeTriggeredClose
+#       test_stop_loss_fill_does_not_engage_kill_switch
+#       test_take_profit_fill_does_not_engage_kill_switch
+#       test_real_mismatch_still_engages_kill_switch
+#
+#   tests/test_live_engine.py
+#     test_resting_order_without_position_is_not_an_anomaly
+#
+# Test di sana juga membuktikan sisi yang harus TETAP: divergensi nyata
+# tanpa fill penjelasan masih menyalakan kill switch. Test yang hanya
+# memeriksa "tidak menyala" bisa lulus karena alasan yang salah --
+# persis jebakan yang hampir menimpa saya di Fase 0.
+# ═══════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════
 # DEFECT 4 — partial fill tidak ditangani

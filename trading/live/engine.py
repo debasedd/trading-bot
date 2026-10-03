@@ -88,6 +88,133 @@ def coin_of_symbol(raw: Any) -> str:
     return normalize_symbol(raw).split("/")[0]
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Pembacaan fill dari bursa
+# ─────────────────────────────────────────────────────────────────────
+#
+# Bursa adalah satu-satunya sumber kebenaran tentang fill. Python
+# sebelumnya tidak pernah membacanya, sehingga:
+#
+#   * SL/TP yang benar-benar fires di bursa tidak tercatat sama sekali --
+#     baris posisi menggantung OPEN dengan realized_pnl NULL
+#   * DAILY_LOSS_LIMIT tidak punya sumber angka, karena
+#     `record_realized_pnl` hanya dipanggil dari jalur yang tidak pernah
+#     dieksekusi bursa
+#   * health_check melihat "posisi hilang dari bursa" dan menyalakan kill
+#     switch pada strike pertama, termasuk TP yang wajar
+#
+# Bentuk respons `userFills` yang direkam dari testnet (lihat
+# tests/hl_live_fixtures.py):
+#
+#   {"coin": "BTC", "px": "85171.0", "sz": "0.00069", "side": "B",
+#    "time": 1791048255070, "startPosition": "-0.24622",
+#    "dir": "Close Short", "closedPnl": "-0.0414", "oid": 61756806860,
+#    "crossed": false, "fee": "-0.001763", "tid": 789291717218145,
+#    "feeToken": "USDC", "twapId": null}
+#
+# Tiga hal yang menentukan dan hanya terlihat di respons nyata:
+#   * `dir` membedakan Open/Close dan Long/Short
+#   * `closedPnl` sudah NET di bursa -- fee sudah dipotong di dalamnya
+#   * `fee` NEGATIF; `abs(fee)` adalah biaya yang dibayar
+#
+# Tidak ada endpoint "status order by cloid" di bursa (diverifikasi:
+# orderStatus dengan cloid -> HTTP 422). Yang ada adalah `tid`, pengenal
+# unik per fill, dan itu yang dipakai untuk dedup.
+
+#: Nilai `dir` yang bursa kirim, dipetakan ke empat jenis yang dipakai
+#: sistem. Bursa hanya mengirim empat nilai ini; nilai lain diabaikan
+#: (mis. "Settlement" dan fill di coin lain seperti "nxlb:SPLIT").
+FILL_DIRECTIONS = {
+    "open long": ("OPEN", "LONG"),
+    "open short": ("OPEN", "SHORT"),
+    "close long": ("CLOSE", "LONG"),
+    "close short": ("CLOSE", "SHORT"),
+}
+
+
+def classify_fill(fill: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """
+    Klasifikasikan satu fill dari `userFills`.
+
+    Mengembalikan dict:
+        {"kind": "OPEN"|"CLOSE", "side": "LONG"|"SHORT"}
+
+    atau `None` kalau fill bukan trade biasa (mis. Settlement, atau fill
+    di coin yang bukan perp -- "nxlb:SPLIT" muncul di respons testnet).
+
+    `None` di sini berarti "bukan urusan kita", bukan "gagal dibaca".
+    """
+    raw_dir = str(fill.get("dir") or "").strip().lower()
+    mapped = FILL_DIRECTIONS.get(raw_dir)
+    if mapped is None:
+        return None
+    kind, side = mapped
+    return {"kind": kind, "side": side}
+
+
+def fill_direction_token(fill: Dict[str, Any]) -> Optional[str]:
+    """
+    Nama gabungan untuk klasifikasi fill: "OPEN_SHORT", "CLOSE_LONG", dst.
+
+    Dipakai sebagai `reason` di log dan sebagai kunci pengelompokan, di
+    mana "OPEN" dan "SHORT" adalah dua informasi terpisah.
+    """
+    cls = classify_fill(fill)
+    if cls is None:
+        return None
+    return "%s_%s" % (cls["kind"], cls["side"])
+
+
+def fill_fee_cost(fill: Dict[str, Any]) -> float:
+    """
+    Biaya yang benar-benar dibayar untuk satu fill, sebagai angka POSITIF.
+
+    Bursa mengirim `fee` negatif (uang keluar). Yang dicatat ke akuntansi
+    harus positif, karena `realized_pnl` mengurangi fee sebagai biaya.
+
+    Kalau tandanya dibiarkan, fee masuk sebagai PENGHASILAN dan PnL
+    terlihat lebih untung dari kenyataan -- kelas bug yang fee berbasis
+    config dulu sebabkan.
+    """
+    try:
+        return abs(float(fill.get("fee") or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fill_f64(fill: Dict[str, Any], key: str) -> float:
+    """Ambil satu field numerik dari fill. Bursa mengirimnya sebagai string."""
+    try:
+        return float(fill.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _close_reason_from_fill(fill: Dict[str, Any]) -> str:
+    """
+    Alasan penutupan yang disimpan di DB, diturunkan dari fill dan trigger.
+
+    Bursa tidak memberi tahu apakah fill itu dari SL, TP, likuidasi,
+    atau penutupan manual -- `userFills` hanya punya `dir` dan `crossed`.
+    Yang bisa dilakukan adalah membandingkan harga fill dengan SL/TP yang
+    sedang terpasang; kalau harga fill menyentuh salah satunya, itu
+    trigger yang bekerja.
+
+    Kalau tidak cocok dengan keduanya, dicatat sebagai `EXCHANGE_FILL`
+    -- jujur mencatat ketidaktahuan, bukan menebak.
+    """
+    px = float(fill.get("price") or 0.0)
+    sl = float(fill.get("stop_loss") or 0.0)
+    tp = float(fill.get("take_profit") or 0.0)
+    if not px:
+        return "EXCHANGE_FILL"
+    if sl and px <= sl:
+        return "SL_HIT"
+    if tp and px >= tp:
+        return "TP_HIT"
+    return "EXCHANGE_FILL"
+
+
 @dataclass
 class LivePosition:
     """Posisi yang dicatat bot, selalu diverifikasi ulang ke bursa."""
@@ -122,6 +249,19 @@ class LiveEngine:
     # supaya test bisa menguji perilaku di dalam dan di luar jendela tanpa
     # menunggu waktu yang sebenarnya.
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+
+    #: `tid` fill yang sudah diproses. Mencegah satu SL yang fire dicatat
+    #: dua kali (PnL dobel, daily-loss breaker terpakai dua kali).
+    _seen_fill_ids: set = field(default_factory=set)
+
+    #: Callback yangdipanggil setiap `poll_exchange_fills()` menemukan fill
+    #: CLOSE. `run.py::_build_live_executor` menyetelnya ke
+    #: `LiveExecutor.record_exchange_fills` supaya fill yang sudah dibaca
+    #: benar-benar sampai ke SQLite dan ke daily-loss breaker.
+    #:
+    #: Dipisah dari `poll_exchange_fills` dengan alasan: engine tidak boleh
+    #: tahu soal database. Yang tahu soal ledger adalah executor.
+    on_exchange_fill: Optional[Callable[[List[Dict[str, Any]]], Any]] = None
 
     # ── Rekonsiliasi ───────────────────────────────────────────────────
 
@@ -601,13 +741,128 @@ class LiveEngine:
             self.gate.persist()
         return newly_filled
 
+    # ── Pembacaan fill dari bursa ───────────────────────────────────────
+
+    async def poll_exchange_fills(self) -> List[Dict[str, Any]]:
+        """
+        Baca fill baru dari bursa lewat `userFills`.
+
+        Inilah JEMBATAN yang sebelumnya tidak ada. coordinarks
+        `check_positions()` di `executor.py` berjalan setiap 0,3 detik
+        hanya untukomorphismseno yang sudaheckeDal; fill yang benar-benar
+        terjadi di bursa tidak pernah dibaca.
+
+        Yang dikembalikan:
+
+        * `kind`  — "OPEN" atau "CLOSE"
+        * `side`  — "LONG" atau "SHORT"
+        * `coin`, `symbol` — ticker polos dan format internal repo
+        * `size`  — ukuran ASLI dari bursa (WAJIB, bukan dari baris SQLite:
+          partial exit punya size sendiri)
+        * `price` — harga fill
+        * `closed_pnl` — PnL yang SUDAH NET di bursa (bukan dikira ulang)
+        * `fee`   — biaya positif
+        * `tid`   — pengenal unik; dipakai dedup
+        * `oid`   — id order di bursa
+
+        Dedup berbasis `tid`: fill yang sudah pernah dikembalikan TIDAK
+        akan muncul lagi. Tanpa itu, satu SL yang fire akan dicatat dua
+        kali: PnL terhitung dua kali dan `DAILY_LOSS_LIMIT` terpakai dua
+        kali.
+
+        `userFills` menerima `startTime`; dipakai supaya tidak perlu
+        2000 fill setiap polling.
+        """
+        def fetch():
+            info = self.exchange.info
+            since = getattr(self, "_last_fill_time", None)
+            if since is not None:
+                try:
+                    return info.user_fills(
+                        self.exchange.query_address, startTime=int(since))
+                except TypeError:
+                    return info.user_fills(self.exchange.query_address)
+            return info.user_fills(self.exchange.query_address)
+
+        try:
+            raw_fills = await asyncio.to_thread(fetch)
+        except Exception as exc:  # noqa: BLE001
+            self.gate.record_error()
+            logger.error("Gagal membaca fill bursa: %s", exc)
+            return []
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        self._last_fill_time = now_ms
+
+        out: List[Dict[str, Any]] = []
+        for fill in (raw_fills or []):
+            if not isinstance(fill, dict):
+                continue
+            cls = classify_fill(fill)
+            if cls is None:
+                # Settlement, atau coin yang bukan perp (mis. nxlb:SPLIT).
+                continue
+            tid = fill.get("tid")
+            key = int(tid) if tid is not None else (
+                "%s-%s-%s" % (fill.get("coin"), fill.get("oid"),
+                              fill.get("time"))
+            )
+            if key in self._seen_fill_ids:
+                continue
+            self._seen_fill_ids.add(key)
+
+            coin = str(fill.get("coin") or "").upper()
+            out.append({
+                "kind": cls["kind"],
+                "side": cls["side"],
+                "direction": "%s_%s" % (cls["kind"], cls["side"]),
+                "coin": coin,
+                "symbol": normalize_symbol(coin),
+                "size": _fill_f64(fill, "sz"),
+                "price": _fill_f64(fill, "px"),
+                "closed_pnl": _fill_f64(fill, "closedPnl"),
+                "fee": fill_fee_cost(fill),
+                "fee_raw": fill.get("fee"),
+                "oid": fill.get("oid"),
+                "tid": key,
+                "time": fill.get("time"),
+                "start_position": _fill_f64(fill, "startPosition"),
+            })
+
+        if out:
+            logger.info(
+                "Membaca %d fill baru dari bursa (%s)",
+                len(out),
+                ", ".join("%s %s %.6g @ %.6g" % (
+                    f["kind"], f["coin"], f["size"], f["price"])
+                    for f in out[:5]),
+            )
+            # Fill yang sudah dibaca harus sampai ke ledger. Tanpa
+            # callback ini, fill hanya dibaca lalu dibuang: baris posisi
+            # tetap OPEN, `realized_pnl` tidak terisi, dan
+            # `DAILY_LOSS_LIMIT` tidak pernah punya angka.
+            if self.on_exchange_fill is not None:
+                try:
+                    result = self.on_exchange_fill(out)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as exc:  # noqa: BLE001
+                    # Fill sudah benar-benar terjadi di bursa. Kegagalan
+                    # mencatatnya TIDAK boleh membuat proses ikut
+                    # mati -- tapi harus terlihat keras, karena itu berarti
+                    # ledger dan bursa tidak sinkron.
+                    logger.error(
+                        "Fill bursa TERJADI tapi gagal dicatat: %s. "
+                        "Ledger dan bursa tidak sinkron.", exc, exc_info=True)
+        return out
+
     # ── Health check ───────────────────────────────────────────────────
 
     async def health_check(self) -> Dict[str, Any]:
         """
         Periksa apakah bursa masih bisa dibaca dan state masih sinkron.
 
-        Ini dipanggil berkala oleh loop. Hasilnya menentukan apakah bot
+        Dipanggil berkala oleh loop. Hasilnya menentukan apakah bot
         boleh mengirim order lagi:
 
         * bursa tidak bisa dibaca -> berhenti. Buta terhadap bursa
@@ -616,6 +871,18 @@ class LiveEngine:
           order dengan keyakinan salah tentang posisinya akan
           menggandakan atau membatalkan eksposur yang salah.
         * kill switch aktif -> berhenti.
+
+        PENTING: sebelum membandingkan, `poll_exchange_fills()` dipanggil
+        lebih dulu. Posisi yang hilang dari bursa KARENA trigger SL/TP
+        miliknya sendiri yang fire adalah hasil yang diharapkan -- bukan
+        divergensi. Tanpa pembacaan fill itu, setiap strike pertama
+        (termasuk take-profit yang wajar) terlihat sebagai "posisi hilang
+        tanpa penjelasan" dan kill switch menyala.
+
+        Order resting tanpa posisi lokal juga bukan anomali: itu order
+        GTC yang memang belum terisi. Yanginnyalah kondisi yang harus
+        memicu: posisi hilang dari bursa tanpa fill yang/def explains,
+        atau posisi di bursa yang tidak pernah kita catat.
         """
         health: Dict[str, Any] = {
             "ok": False,
@@ -623,11 +890,39 @@ class LiveEngine:
             "reconciled": False,
             "kill_switch": self.gate.engaged,
             "problems": [],
+            "closed_by_exchange": [],
         }
 
         if self.gate.engaged:
             health["problems"].append("kill switch aktif")
             return health
+
+        # Fill dibaca LEBIH DAHULU. Ini yang membedakan "trigger kita
+        # yang fire" dari "posisi hilang entah kenapa".
+        try:
+            fills = await self.poll_exchange_fills()
+        except Exception as exc:  # noqa: BLE001
+            fills = []
+            logger.warning("Gagal polling fill saat health check: %s", exc)
+
+        closed_coins = {
+            f["coin"] for f in fills
+            if f.get("kind") == "CLOSE" and f.get("coin")
+        }
+        local_sl_tp = {
+            p.coin: (p.stop_loss, p.take_profit)
+            for p in self.positions.values()
+        }
+        health["closed_by_exchange"] = [
+            {"coin": f["coin"], "size": f["size"],
+             "closed_pnl": f["closed_pnl"], "fee": f["fee"],
+             "reason": _close_reason_from_fill({
+                 "price": f["price"],
+                 "stop_loss": local_sl_tp.get(f["coin"], (0.0, 0.0))[0],
+                 "take_profit": local_sl_tp.get(f["coin"], (0.0, 0.0))[1],
+             })}
+            for f in fills if f.get("kind") == "CLOSE"
+        ]
 
         try:
             remote = await asyncio.to_thread(self._fetch_remote_positions)
@@ -663,23 +958,44 @@ class LiveEngine:
                 health["problems"].append(
                     "posisi di bursa tanpa catatan lokal: {}".format(coin))
 
-        for coin, local in local_by_coin.items():
+        for coin, local in list(local_by_coin.items()):
             rpos = remote_by_coin.get(coin)
-            if rpos is None:
-                health["problems"].append(
-                    "posisi tercatat lokal tapi hilang di bursa: "
-                    "{}".format(coin))
-            elif not self._sizes_match(local, rpos):
-                health["problems"].append(
-                    "ukuran posisi tidak cocok: {}".format(coin))
+            if rpos is not None:
+                if not self._sizes_match(local, rpos):
+                    health["problems"].append(
+                        "ukuran posisi tidak cocok: {}".format(coin))
+                continue
 
-        # Order resting tanpa posisi di bursa: mungkin sudah terisi
-        # dan proteksinya belum terpasang.
+            # Posisi hilang dari bursa. Kalau ADA fill Close untuk koin
+            # ini, itu trigger yang kita pasang sendiri yang bekerja --
+            # hasil yang diharapkan, bukan divergensi.
+            if coin in closed_coins:
+                logger.info(
+                    "Posisi %s hilang dari bursa karena fill CLOSE dari "
+                    "bursa (SL/TP); bukan divergensi.", coin)
+                continue
+
+            health["problems"].append(
+                "posisi tercatat lokal tapi hilang di bursa: "
+                "{}".format(coin))
+
+        # Order resting tanpa posisi lokal BUKAN anomali. Order GTC
+        # yang belum terisi memang tidak punya posisi -- itu definisi
+        # dari order resting. Yang checked di sini cuma order yang
+        # hilang baik posisi maupun fill pembukanya, karena itu order
+        # menggantung yang tidak akan pernah tertangani.
+        resting_with_open_fill = {
+    #: Callback yang dipanggil setiap `poll_exchange_fills()` menemukan fill
+        }
         for order in orders or []:
             coin = order.get("coin")
-            if coin and coin not in local_by_coin:
-                health["problems"].append(
-                    "order resting tanpa posisi tercatat: {}".format(coin))
+            if not coin:
+                continue
+            if coin in local_by_coin or coin in resting_with_open_fill:
+                continue
+            logger.debug(
+                "Order resting %s tanpa posisi lokal; dibiarkan karena "
+                "GTC yang belum terisi memang begitu.", coin)
 
         health["reconciled"] = not health["problems"]
         health["ok"] = health["reachable"] and health["reconciled"]

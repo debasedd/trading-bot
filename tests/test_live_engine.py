@@ -645,13 +645,44 @@ class TestHealthCheck(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(h["ok"])
         self.assertIn("kill switch aktif", h["problems"])
 
-    async def test_resting_order_without_position_flags(self):
+    async def test_resting_order_without_position_is_not_an_anomaly(self):
+        """
+        Order GTC yang belum terisi BUKAN anomali.
+
+        PERUBAHAN SEMAT (item b Fase 1). Test sebelumnyanamed
+        `test_resting_order_without_position_flags` dan ekspektasinya
+        `health_check` melaporkan order resting sebagai problem --
+        yang berarti kill switch menyala.
+
+        Itu persis defect yang item (b) perbaiki: order resting adalah
+        definisi dari order yang belum terisi. Menandainya sebagai
+        problem membuat SATU order GTC yang belum terisi menghentikan
+        seluruh trading.
+
+        `FakeExchange` di file ini tidak menyertakan `_fills`, jadi
+        `poll_exchange_fills()` mengembalikan kosong dan tidak ada fill
+        pembuka yang bisa menjelaskan order itu -- ini persis skenario
+        "order resting yang wajar".
+        """
         ex = FakeExchange()
         ex.positions = lambda: []
         ex.open_orders = lambda: [{"coin": "BTC"}]
         eng = self._wire(ex)
 
         h = await eng.health_check()
-        self.assertFalse(h["ok"])
-        self.assertTrue(any("order resting" in p for p in h["problems"]),
-                        str(h["problems"]))
+
+        self.assertFalse(
+            any("order resting" in p for p in h["problems"]),
+            "order resting tanpa posisi lokal adalah kondisi normal, "
+            "bukan divergensi; problems=%s" % h["problems"],
+        )
+        self.assertTrue(
+            h["ok"],
+            "health check harus tetap sehat dengan order resting yang "
+            "wajar; problems=%s" % h["problems"],
+        )
+        self.assertFalse(
+            eng.gate.engaged,
+            "kill switch tidak boleh menyala hanya karena ada order GTC "
+            "yang belum terisi",
+        )

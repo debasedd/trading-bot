@@ -5,7 +5,7 @@ MASALAH ISOLASI YANG INI SELESAIKAN
 ----------------------------------
 `SafetyGate.__init__` (trading/live/safety.py:195) memuat
 `data_store/live_counters.json` KAPAN SAJA `TRADEBOT_LIVE` bernilai
-benar -- bahkan kalau `state_path`zhSNULL. Itu disengaja di produksi.
+benar -- bahkan kalau `state_path` bernilai None. Itu disengaja di produksi.
 
 Akibatnya test yang menyuntik `TRADEBOT_LIVE=1` akan MEWARISI kill
 switch dari test lain atau dari run sebelumnya, dan order ditolak
@@ -48,14 +48,26 @@ def clean_gate(cfg=None, **overrides):
     gate = SafetyGate(LiveConfig(**{
         k: v for k, v in vars(cfg).items()
     }), env=dict(LIVE_ENV), state_path=state_path)
-    # Blekir ulang apa pun yang mungkin terbaca (harusnya tidak ada,
+    # Ensure ulang apa pun yang mungkin terbaca (seharusnya tidak ada,
     # tapi ini membuat jaminan eksplisit dan tidak bergantung pada
     # detail implementasi load()).
+    #
+    # `day_utc` DIISI dengan tanggal UTC hari ini, bukan string kosong.
+    # Alasannya: `master_blockers(now)` memanggil `rollover_if_needed(now)`
+    # lebih dulu, dan itu mereset counter harian bila `day_utc != today`.
+    # Dengan `day_utc = ""`, setiap pemanggilan pertama akan menganggap
+    # ini hari baru dan meng-nolkan `realized_pnl` -- jadi test daily-loss
+    # breaker akan lulus karena alasan yang salah.
+    #
+    # Di produksi `day_utc` selalu terisi (di-set saat load file state),
+    # jadi ini memirror kondisi nyata, bukan mengubahnya.
+    from datetime import datetime, timezone
+
     gate.counters.engaged = False
     gate.counters.orders_sent = 0
     gate.counters.realized_pnl = 0.0
     gate.counters.consecutive_errors = 0
-    gate.counters.day_utc = ""
+    gate.counters.day_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     gate.counters._unreadable = False
     return gate
 
