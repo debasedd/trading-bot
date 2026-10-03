@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from datetime import datetime, timezone
 
+from hyperliquid.utils.types import Cloid
+
 from core.config import LiveConfig
 from trading.live.safety import SafetyGate
 
@@ -444,7 +446,15 @@ class TestQuantization(unittest.TestCase):
         self.assertEqual(self.ex.quantize_price("BTC", 0.0), 0.0)
 
     def test_order_applies_quantization(self):
-        """Size yang dikirim harus yang sudah dibulatkan."""
+        """
+        Size yang dikirim harus yang sudah dibulatkan.
+
+        `cloid` memakai bentuk hex yang sah. Versi lama memakai
+        `cloid="c"`, dan itu bukan detail kecil: `place_limit_order`
+        sekarang menolak cloid yang salah bentuk sebelum mengirim,
+        jadi test ini akan gagal karena cloid -- bukan karena
+        quantization yang seharusnya diuji.
+        """
         sent = {}
 
         class _Exch:
@@ -452,6 +462,7 @@ class TestQuantization(unittest.TestCase):
                       reduce_only=False, cloid=None):
                 sent["size"] = size
                 sent["price"] = price
+                sent["cloid"] = cloid
                 return {"status": "ok",
                         "filled": {"totalSz": size, "avgPx": price},
                         "oid": 1}
@@ -460,9 +471,12 @@ class TestQuantization(unittest.TestCase):
         self.ex.quantize_size = lambda coin, s: 0.5
         self.ex.quantize_price = lambda coin, p: 100.0
         outcome = self.ex.place_limit_order("BTC", True, 0.123456789, 100.5,
-                                            cloid="c")
-        self.assertTrue(outcome.ok)
+                                            cloid="0x" + "ab" * 16)
+        self.assertTrue(outcome.ok, "order ditolak: %s" % outcome.error)
         self.assertEqual(sent["size"], 0.5)
+        # cloid diteruskan sebagai objek Cloid, bukan string: inilah
+        # yang membuat order benar-benar bisa ditandatangani.
+        self.assertIsInstance(sent["cloid"], Cloid)
 
 
 class _Mids:

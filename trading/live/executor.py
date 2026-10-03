@@ -59,13 +59,26 @@ _REFRESH_SECONDS = 2.0
 
 def make_cloid(prefix: str = "tb") -> str:
     """
-    Client order id yang unik.
+    Client order id yang unik, dalam bentuk yang bursa terima.
 
-    Wajib untuk order opening: tanpa cloid, timeout membuat retry
-    menggandakan posisi karena bot tidak pernah bisa tahu apakah
-    order pertamanya benar-benar masuk.
+    Bentuk WAJIB: `0x` + 32 karakter hex. Bukan string bebas. Hyperliquid
+    menandatangani client order id bersama order-nya
+    (`hyperliquid/utils/signing.py::order_request_to_order_wire` memanggil
+    `cloid.to_raw()`), jadi formatnya bukan pilihan -- bursa yang menolak.
+
+    Versi lama menghasilkan `'tb-<16 hex>'`, yang tidak pernah sampai ke
+    bursa: order gagal di lapisan signing dengan `AttributeError`, dan
+    `place_limit_order` mengubahnya jadi `OrderOutcome(ok=False)` yang
+    terlihat seperti penolakan biasa. Akibatnya tidak ada order opening
+    yang pernah berhasil dikirim, dan tidak ada satu pun log yang
+    menyinggung sebab sebenarnya.
+
+    `prefix` sengaja tidak dipakai: 16 byte hex sudah seluruhnya
+    terpakai oleh format bursa, dan tidak ada ruang tersisa untuk
+    prefix tanpa memotong entropi.
     """
-    return "{}-{}".format(prefix, uuid.uuid4().hex[:16])
+    del prefix  # tidak ada ruang di 16 byte; lihat docstring
+    return "0x%032x" % uuid.uuid4().int
 
 
 def coin_of(symbol: str) -> str:

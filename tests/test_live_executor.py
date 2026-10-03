@@ -17,8 +17,32 @@ class TestCloid(unittest.TestCase):
         self.assertEqual(len(ids), 200,
                          "cloid ulang = retry menggandakan posisi")
 
-    def test_cloid_has_prefix(self):
-        self.assertTrue(make_cloid("close").startswith("close-"))
+    def test_cloid_is_the_format_the_exchange_accepts(self):
+        """
+        cloid harus `0x` + 32 hex -- format yang bursa terima.
+
+        Test lama asserts `make_cloid("close").startswith("close-")`,
+        dan lulus karena mengklaim yang salah: prefix tidak muat. Format
+        bursa memakai seluruh 16 byte, dan `Cloid._validate()` SDK
+        menolak apa pun yang panjangnya bukan 32 karakter setelah `0x`.
+
+        Test itu lulus karena menguji perilaku yang TIDAK PERNAH bekerja:
+        order dengan prefix tidak akan sampai ke bursa.
+        """
+        for prefix in ("tb", "close"):
+            cloid = make_cloid(prefix)
+            self.assertTrue(
+                cloid.startswith("0x"),
+                "cloid %r tidak diawali 0x" % cloid,
+            )
+            body = cloid[2:]
+            self.assertEqual(len(body), 32,
+                             "cloid %r punya %d hex, bursa mewajibkan 32"
+                             % (cloid, len(body)))
+            self.assertTrue(
+                all(ch in "0123456789abcdef" for ch in body),
+                "cloid %r bukan hex" % cloid,
+            )
 
 
 class TestCoinExtraction(unittest.TestCase):

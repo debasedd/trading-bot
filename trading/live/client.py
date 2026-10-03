@@ -27,6 +27,13 @@ from typing import Any, Dict, List, Optional
 
 from core.logger import get_logger
 
+try:
+    from hyperliquid.utils.types import Cloid
+except ImportError:  # pragma: no cover
+    # Modul ini harus bisa di-import di mesin tanpa SDK terpasang; SDK
+    # sendiri tetap wajib ada sebelum order apa pun benar-benar dikirim.
+    Cloid = None
+
 logger = get_logger("live_client")
 
 
@@ -54,6 +61,50 @@ class OrderOutcome:
         if self.filled_size <= 0:
             return "DITERIMA tapi tidak terisi"
         return f"TERISI {self.filled_size} @ {self.avg_price}"
+
+
+def to_cloid(raw: Any) -> Optional[Any]:
+    """
+    Ubah client order id menjadi objek yang dipahami SDK.
+
+    SDK Hyperliquid MENYIGN cloid bersama order
+    (`order_request_to_order_wire` memanggil `cloid.to_raw()`), jadi
+    cloid bukan string bebas: harus `0x` diikuti 32 karakter hex, dan
+    harus jadi objek `Cloid`, bukan `str`.
+
+    String biasa ditolak SDK di lapisan signing -- sebelum ada yang
+    dikirim ke bursa -- dengan error `AttributeError` yang tidak
+    menyinggung cloid sama sekali. Konversi dilakukan di SATU tempat
+    ini supaya tidak ada pemanggil yang perlu tahu bentuknya.
+
+    `None` diteruskan apa adanya: order closing `reduce_only` dan
+    `emergency_flat` memang mengirim tanpa cloid, dan itu sah.
+
+    Bentuk yang salah DITOLAK dengan pesan yang menyebut cloid, bukan
+    diteruskan. Meneruskannya berarti order hilang tanpa jejak.
+
+    Pemeriksaan hex dilakukan DI SINI, bukan diserahkan ke
+    `Cloid._validate()`. Validasi SDK hanya memeriksa awalan `0x` dan
+    panjang 32 karakter -- `Cloid("0x" + "zz"*16)` diterima SDK, lalu
+    ditolak bursa dengan pesan yang tidak menyebut cloid. Toda yang
+    salah harus berhenti di sisi ini, sebelum ada yang dikirim.
+    """
+    if raw is None or isinstance(raw, Cloid):
+        return raw
+
+    text = str(raw)
+    body = text[2:] if text[:2].lower() == "0x" else text
+    if len(body) != 32 or any(ch not in "0123456789abcdefABCDEF"
+                             for ch in body):
+        raise ValueError(
+            f"cloid tidak valid ({raw!r}): harus '0x' + 32 hex. "
+            f"Bentuk lain ditolak bursa, dan ditolak SDK saat signing "
+            f"-- order tidak akan pernah terkirim."
+        )
+    try:
+        return Cloid.from_str(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"cloid tidak valid ({raw!r}): {exc}") from exc
 
 
 def parse_order_response(raw: Any) -> OrderOutcome:
@@ -385,11 +436,24 @@ class LiveExchange:
         ketika respons hilang karena timeout kita tidak punya cara untuk
         menanyakan "apakah order saya sudah masuk?". Idempotensi itu yang
         membedakan retry yang aman dari retry yang menggandakan posisi.
+
+        Nilai `cloid` harus berbentuk hex `0x` + 32 karakter -- LIHAT
+        `to_cloid`. Bentuk string bebas tidak akan sampai ke bursa: SDK
+        menolaknya saat signing.
         """
         if size <= 0 or price <= 0:
             return OrderOutcome(
                 ok=False, error=f"size/price tidak valid: {size} @ {price}"
             )
+
+        # Konversi cloid dilakukan SEBELUMisto order apa pun, supaya
+        # bentuk yang salah muncul sebagai penolakan yang jelas dan
+        # tercatat, bukan sebagai exception yang ditangkap `except`
+        # di bawah dan berubah jadi error yang tidak menyebut cloid.
+        try:
+            sdk_cloid = to_cloid(cloid)
+        except ValueError as exc:
+            return OrderOutcome(ok=False, error=str(exc))
 
         # Bulatkan ke lot/tick bursa sebelum mengirim. Size yang tidak
         # sesuai aturan bursa ditolak dengan pesan yang sering tidak
@@ -408,7 +472,7 @@ class LiveExchange:
         try:
             raw = self.exchange.order(
                 coin, is_buy, size, price, order_type,
-                reduce_only=reduce_only, cloid=cloid,
+                reduce_only=reduce_only, cloid=sdk_cloid,
             )
         except Exception as exc:  # noqa: BLE001
             return OrderOutcome(ok=False, error=str(exc), raw=exc)
