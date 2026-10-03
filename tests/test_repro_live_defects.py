@@ -115,15 +115,19 @@ class TestFixtureFacts(unittest.TestCase):
         )
 
 
-# Bentuk kunci yang dipakai sisi bursa, direkam apa adanya dari respons
-# nyata. Ini fakta -- bukan defect -- jadi harus lulus. Test ini yang
-# membuat test DEFECT-2 bermakna: kalau format ini berubah, kedua sisi
-# harus dibandingkan ulang.
+# Bentuk kunci yang dibaca dari bursa. Ini fakta, bukan defect, jadi harus
+# lulus.
+#
+# PERUBAHAN:(assert ini sebelumnya mengharapkan "BTC / USDC:USDC" --
+# format yang dikarang engine.py sebelum item (a) diperbaiki. Sekarang
+# semua kunci lewat `normalize_symbol()` dan hasilnya format internal
+# repo: "BTC/USDT:USDT". Test ini sengaja diperbarui bersama perbaikannya;
+# kalau format berubah lagi, test ini yang akan menangkap lebih dulu.
 
 
 class TestRemoteKeyFormatFact(unittest.IsolatedAsyncioTestCase):
 
-    async def test_remote_key_format_is_verbatim(self):
+    async def test_remote_key_uses_internal_format(self):
         from trading.live.engine import LiveEngine
         from core.config import LiveConfig
 
@@ -131,7 +135,11 @@ class TestRemoteKeyFormatFact(unittest.IsolatedAsyncioTestCase):
         engine = LiveEngine(gate=clean_gate(), exchange=ex, cfg=LiveConfig())
         remote = await asyncio.to_thread(engine._fetch_remote_positions)
         self.assertEqual(len(remote), 1)
-        self.assertEqual(remote[0]["symbol"], "BTC / USDC:USDC")
+        self.assertEqual(
+            remote[0]["symbol"], "BTC/USDT:USDT",
+            "kunci dari bursa harus format internal repo; kalau ini "
+            "berubah, reconcile() dan test DEFECT-2 harus dievaluasi ulang",
+        )
         self.assertEqual(remote[0]["coin"], "BTC")
 
 
@@ -202,7 +210,6 @@ class TestSymbolNotionalIntOnStringField(unittest.IsolatedAsyncioTestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 
-@known_broken("DEFECT-2 format kunci simbol tidak sinkron")
 class TestReconcileSymbolKeyMismatch(unittest.IsolatedAsyncioTestCase):
     """Reproduksi: reconcile harus bisa mencocokkan posisi lokal vs bursa."""
 

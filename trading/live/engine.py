@@ -33,6 +33,60 @@ from trading.live.safety import Blocker, OrderRequest, SafetyGate
 
 logger = get_logger("live_engine")
 
+# ─────────────────────────────────────────────────────────────────────
+# Format simbol internal repo
+# ─────────────────────────────────────────────────────────────────────
+#
+# Bursa Hyperliquid memakai ticker polos: "BTC". Repo ini memakai format
+# ccxt: "BTC/USDT:USDT". Ada tiga bentuk yang pernah muncul di kode sebelum
+# normalisasi ini ada:
+#
+#   "BTC/USDT:USDT"    format internal, dari Order.symbol
+#   "BTC / USDC:USDC"   dikarang engine.py, dipakai sebagai kunci dict
+#   "BTC"               apa yang bursa kirim di `position.coin`
+#
+# Perbedaan terakhir itu yang berbahaya: `reconcile()` membandingkan kunci
+# lokal dengan kunci bursa secara langsung, sehingga koin yang SAMA
+# terlihat sebagai `only_local` DAN `only_remote`. Dengan
+# `auto_reconcile=False` (default), itu menyalakan kill switch setiap kali
+# reconcile dipanggil -- termasuk dari `emergency_flat()`, yang jadi tidak
+# pernah melaporkan "flattened".
+#
+# Satu fungsi, satu format. Kalau ada tempat lain yang perlu kunci simbol,
+# dia HARUS lewat sini.
+INTERNAL_SYMBOL_TEMPLATE = "{coin}/USDT:USDT"
+
+
+def normalize_symbol(raw: Any) -> str:
+    """
+    Ubah apa pun yang bisa muncul sebagai nama aset menjadi format internal.
+
+    Menerima:
+      * ticker polos dari bursa:          "BTC"      -> "BTC/USDT:USDT"
+      * format internal:                "BTC/USDT:USDT" -> tidak berubah
+      * format yang pernah dikarang:     "BTC / USDC:USDC" -> "BTC/USDT:USDT"
+
+    Idempoten: `normalize_symbol(normalize_symbol(x)) == normalize_symbol(x)`.
+
+    Koin yang mengandung spasi atau garis (mis. "1000PEPE") dipertahankan
+    utuh -- bursanya memang mengirim nama seperti itu.
+    """
+    if raw is None:
+        raise ValueError("raw symbol tidak boleh None")
+    text = str(raw).strip()
+    if not text:
+        raise ValueError("raw symbol tidak boleh kosong")
+
+    # Ambil bagian paling kiri: sebelum "/" atau sebelum spasi.
+    # "BTC/USDT:USDT" -> "BTC";  "BTC / USDC:USDC" -> "BTC";  "BTC" -> "BTC"
+    coin = text.replace("/", " ").split()[0]
+    return INTERNAL_SYMBOL_TEMPLATE.format(coin=coin.upper())
+
+
+def coin_of_symbol(raw: Any) -> str:
+    """Ticker polos dari bentuk apa pun. Kebalikan dari `normalize_symbol`."""
+    return normalize_symbol(raw).split("/")[0]
+
 
 @dataclass
 class LivePosition:
@@ -159,7 +213,7 @@ class LiveEngine:
             if not name:
                 continue
             out.append({
-                "symbol": "{} / USDC:USDC".format(name),
+                "symbol": normalize_symbol(name),
                 "coin": name,
                 "size": size,
                 "side": "LONG" if size > 0 else "SHORT",
@@ -522,7 +576,7 @@ class LiveEngine:
             try:
                 position = await self._attach_protection(
                     coin,
-                    "{} / USDC:USDC".format(coin),
+                    normalize_symbol(coin),
                     side,
                     abs(size),
                     price,

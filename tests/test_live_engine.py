@@ -155,7 +155,7 @@ class TestOrderSequence(unittest.IsolatedAsyncioTestCase):
         eng = _engine(ex)
 
         await eng.submit_order(
-            "BTC", "BTC / USDC:USDC", is_buy=True, size=0.01, price=100.0,
+            "BTC", "BTC/USDT:USDT", is_buy=True, size=0.01, price=100.0,
             stop_loss=95.0, take_profit=110.0, leverage=5, cloid="c1",
         )
 
@@ -172,7 +172,7 @@ class TestOrderSequence(unittest.IsolatedAsyncioTestCase):
         eng = _engine(ex)
 
         await eng.submit_order(
-            "BTC", "BTC / USDC:USDC", is_buy=True, size=0.01, price=100.0,
+            "BTC", "BTC/USDT:USDT", is_buy=True, size=0.01, price=100.0,
             stop_loss=95.0, take_profit=110.0, leverage=5, cloid="unik-123",
         )
 
@@ -190,7 +190,7 @@ class TestOrderSequence(unittest.IsolatedAsyncioTestCase):
         eng = _engine(ex)
 
         result = await eng.submit_order(
-            "BTC", "BTC / USDC:USDC", is_buy=True, size=0.01, price=100.0,
+            "BTC", "BTC/USDT:USDT", is_buy=True, size=0.01, price=100.0,
             stop_loss=95.0, take_profit=110.0, leverage=5, cloid="c1",
         )
 
@@ -203,7 +203,7 @@ class TestOrderSequence(unittest.IsolatedAsyncioTestCase):
         eng = _engine(ex, gate=_gate(kill=True))
 
         result = await eng.submit_order(
-            "BTC", "BTC / USDC:USDC", is_buy=True, size=0.01, price=100.0,
+            "BTC", "BTC/USDT:USDT", is_buy=True, size=0.01, price=100.0,
             stop_loss=95.0, take_profit=110.0, leverage=5, cloid="c1",
         )
 
@@ -217,7 +217,7 @@ class TestOrderSequence(unittest.IsolatedAsyncioTestCase):
                 ex = FakeExchange()
                 eng = _engine(ex)
                 result = await eng.submit_order(
-                    "BTC", "BTC / USDC:USDC", is_buy=True, size=0.01,
+                    "BTC", "BTC/USDT:USDT", is_buy=True, size=0.01,
                     price=100.0, stop_loss=sl, take_profit=tp,
                     leverage=5, cloid="c1",
                 )
@@ -238,7 +238,7 @@ class TestTriggerDirection(unittest.IsolatedAsyncioTestCase):
         ex = FakeExchange()
         eng = _engine(ex)
         await eng.submit_order(
-            "BTC", "BTC / USDC:USDC", is_buy=is_buy, size=0.01, price=100.0,
+            "BTC", "BTC/USDT:USDT", is_buy=is_buy, size=0.01, price=100.0,
             stop_loss=95.0, take_profit=110.0, leverage=5, cloid="c1",
         )
         return [c for c in ex.calls if c[0] == "place_trigger_order"]
@@ -283,14 +283,14 @@ class TestEmergencyFlat(unittest.IsolatedAsyncioTestCase):
         from trading.live.engine import LivePosition
 
         return LivePosition(
-            symbol="BTC / USDC:USDC", coin="BTC", side=side, size=size,
+            symbol="BTC/USDT:USDT", coin="BTC", side=side, size=size,
             entry_price=100.0, stop_loss=95.0, take_profit=110.0, leverage=5,
         )
 
     def _with_position(self, side="LONG"):
         ex = FakeExchange()
         eng = _engine(ex)
-        eng.positions["BTC / USDC:USDC"] = self._position(side)
+        eng.positions["BTC/USDT:USDT"] = self._position(side)
         return ex, eng
 
     async def test_long_closed_with_buy(self):
@@ -345,7 +345,7 @@ class TestEmergencyFlat(unittest.IsolatedAsyncioTestCase):
 
         ex = FailingExchange()
         eng = _engine(ex)
-        eng.positions["BTC / USDC:USDC"] = self._position("LONG")
+        eng.positions["BTC/USDT:USDT"] = self._position("LONG")
         result = await eng.emergency_flat("test")
 
         self.assertFalse(result["flattened"],
@@ -357,7 +357,7 @@ class TestEmergencyFlat(unittest.IsolatedAsyncioTestCase):
         """Tanpa harga pasar, bot tidak boleh mengklaim berhasil."""
         ex = FakeExchange(mids={})
         eng = _engine(ex)
-        eng.positions["BTC / USDC:USDC"] = self._position("LONG")
+        eng.positions["BTC/USDT:USDT"] = self._position("LONG")
         result = await eng.emergency_flat("test")
 
         self.assertFalse(result["flattened"])
@@ -497,7 +497,7 @@ class TestPendingFillMonitoring(unittest.IsolatedAsyncioTestCase):
         filled = await eng.check_pending_fills()
 
         self.assertEqual(len(filled), 1)
-        self.assertIn("BTC / USDC:USDC", eng.positions)
+        self.assertIn("BTC/USDT:USDT", eng.positions)
         triggers = [c for c in ex.calls if c[0] == "place_trigger_order"]
         self.assertEqual(len(triggers), 2, "SL dan TP harus dipasang")
 
@@ -515,8 +515,8 @@ class TestPendingFillMonitoring(unittest.IsolatedAsyncioTestCase):
 
         ex = FakeExchange()
         eng = self._ready(ex)
-        eng.positions["BTC / USDC:USDC"] = LivePosition(
-            symbol="BTC / USDC:USDC", coin="BTC", side="LONG", size=0.05,
+        eng.positions["BTC/USDT:USDT"] = LivePosition(
+            symbol="BTC/USDT:USDT", coin="BTC", side="LONG", size=0.05,
             entry_price=100.0, stop_loss=95.0, take_profit=110.0, leverage=5,
             sl_order_id=1, tp_order_id=2,
         )
@@ -581,7 +581,7 @@ class TestHealthCheck(unittest.IsolatedAsyncioTestCase):
         from trading.live.engine import LivePosition
 
         return LivePosition(
-            symbol="BTC / USDC:USDC", coin="BTC", side=side, size=size,
+            symbol="BTC/USDT:USDT", coin="BTC", side=side, size=size,
             entry_price=100.0, stop_loss=95.0, take_profit=110.0, leverage=5,
             sl_order_id=1, tp_order_id=2,
         )
@@ -629,7 +629,7 @@ class TestHealthCheck(unittest.IsolatedAsyncioTestCase):
         ex = FakeExchange()
         ex.positions = lambda: []
         eng = self._wire(ex)
-        eng.positions["BTC / USDC:USDC"] = self._position("LONG")
+        eng.positions["BTC/USDT:USDT"] = self._position("LONG")
 
         h = await eng.health_check()
         self.assertFalse(h["ok"])

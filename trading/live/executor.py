@@ -294,11 +294,14 @@ class LiveExecutor:
         repo = await self._get_repo()
         rows = await repo.get_open_positions()
 
-        # Index berdasarkan KOIN, bukan symbol. `submit_order`
-        # menyimpan `self.positions` dengan symbol persis yang diberikan
-        # ("BTC/USDT:USDT"), sedangkan `check_pending_fills` menyimpan
-        # "BTC / USDC:USDC" (engine.py:491). Pencocokan per symbol
-        # berarti separuh posisi live tidak pernah ditemukan.
+        # Index berdasarkan KOIN, bukan symbol.
+        #
+        # `normalize_symbol()` (engine.py) sekarang menjamin SEMUA kunci
+        # `self.positions` berformat sama, jadi pencocokan per symbol
+        # sudah bisa dipakai. Index per koin tetap dipakai di sini
+        # sebagai lapisan kedua: nama koin dari bursa ("BTC") adalah
+        # bentuk yang paling murah untuk dicocokkan, dan ia tahan kalau
+        # suatu saat format internal berubah lagi.
         lp_by_coin = {p.coin.upper(): p for p in self.engine.positions.values()}
         seen_coins = set()
 
