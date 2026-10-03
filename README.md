@@ -4,11 +4,20 @@ Sistem agen kecerdasan buatan otonom untuk perdagangan berjangka kripto (*crypto
 
 Sistem dirancang dengan arsitektur multi-agen asinkron (*event-driven*), terhubung ke data publik bursa, agregator berita global, kalender makroekonomi, model *Machine Learning* (RandomForest) lokal, serta *dashboard* pemantauan *real-time* berbasis web.
 
-> **Untuk peta lengkap arsitektur, algoritma, dan daftar temuan, baca
-> [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).**
-> Dokumen itu adalah hasil pembacaan seluruh baris kode project dan selalu
-> lebih akurat daripada README ini. `PLANNING.md` berisi rancangan desain awal
-> yang sudah diarsipkan.
+> **Dokumentasi lengkap ada di [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** —
+> 18 bagian dari pembacaan baris-per-baris source, dengan `file:line` untuk
+> tiap klaim dan daftar 53 defect terverifikasi. README ini ringkas dan
+> beberapa angkanya sudah usang; dokumen itu yang benar.
+>
+> **Status nyata sistem ini, singkat:**
+> - Jalur **live belum pernah mengirim order** — `SafetyGate` menolak semua
+>   karena `TRADEBOT_LIVE` tidak pernah di-set oleh kode mana pun (§8.2).
+> - Jalur **paper berjalan tapi strateginya rugi**: 250 trade, profit factor
+>   0.213, win rate 30% terhadap 66.8% yang dibutuhkan untuk impas (§6).
+> - Riset menemukan **satu edge yang valid** (cross-sectional momentum,
+>   t = 2.34, 4/4 walk-forward) dan mengimplementasikannya di
+>   `trading/cross_sectional.py` — **tapi modul itu tidak terhubung ke
+>   apa pun** (§17.1).
 
 ---
 
@@ -95,12 +104,13 @@ layar, karena `DecisionAgent` dan callback HUD membaca tabel yang sama.
    - **Harga Likuidasi Terisolasi (*Isolated Liquidation Price*)**:
      $$\text{Long Liq} = \text{Entry} \times \left(1 - \frac{1}{\text{Leverage}} + \text{MMR}\right)$$
      $$\text{Short Liq} = \text{Entry} \times \left(1 + \frac{1}{\text{Leverage}} - \text{MMR}\right)$$
-   - **Perhitungan PnL & Fee Realistis**: Maker 0.02%, Taker 0.05% (roundtrip 0.10%).
-   - **Seluruh kalkulasi keuangan memakai `Decimal` dengan `ROUND_DOWN` eksplisit** — termasuk SL, TP, likuidasi, dan sizing. Pada scalp berjarak 0.25%, satu tick pembulatan ke arah yang salah bukan netral: ia memakan ruang gerak yang justru alasan kenapa strategi ini dipilih.
+   - **Perhitungan PnL & Fee Realistis**: Maker 0.015%, Taker 0.045% (roundtrip 0.09%). **Semua fill di produksi kena taker** — tidak ada jalur maker.
+   - **Seluruh kalkulasi keuangan memakai `Decimal` dengan `ROUND_DOWN` eksplisit** — termasuk SL, TP, likuidasi, dan sizing. Pada scalp berjarak 0.40%, satu tick pembulatan ke arah yang salah bukan netral: ia memakan ruang gerak yang justru alasan kenapa strategi ini dipilih.
    - **Circuit breaker rugi harian** dibandingkan terhadap **modal awal**, bukan saldo kas. Memakai kas sebagai penyebut membuat ambang ikut turun begitu margin terkunci — pelonggaran terjadi justru di saat paling rugi.
+   - ⚠️ **Kenyataannya: R:R riil 1:2, bukan 1:1.** Winner rata-rata +0.50, loser rata-rata −1.01 → butuh win rate 66.8%, aktual 30.0%. Lihat `docs/ARCHITECTURE.md` §6.
 
 8. **Guard Kualitas Tick (Anti Spike-Fill)**:
-   - Stop scalp hanya 0.25% dari harga, jadi fill di puncak lokal berarti stop-nya sudah berada di dalam spread. `PaperTradingEngine._tick_quality_guard` menolak fill yang:
+   - Stop scalp hanya 0.40% dari harga, jadi fill di puncak lokal berarti stop-nya sudah berada di dalam spread. `PaperTradingEngine._tick_quality_guard` menolak fill yang:
      1. berumur lebih tua dari `scalping.max_tick_age_seconds`, atau
      2. menyimpang lebih dari `tight_sl_pct` dari median `stale_tick_min_samples` tick terakhir.
    - **Fail-open yang disengaja:** data historis yang belum cukup *mengizinkan* eksekusi. Menolak order karena tidak punya data sejarah akan membuat bot diam persis di detik-detik paling ramai.
@@ -174,23 +184,23 @@ trading-bot/
 │   ├── app.py                  # Server Dash (2 interval: 500 ms + 60 s)
 │   ├── layouts/hud.py          # Grid HUD 12 kolom
 │   ├── layouts/hud_figures.py  # 5 pembuat figure Plotly
-│   ├── callbacks/              # 16 callback real-time
-│   └── assets/style.css        # Token CSS (satu sumber tinggi panel)
-├── tests/                      # 14 file test (108+ test)
+│   ├── callbacks/              # 19 callback real-time (18 di 2 Hz)
+│   └── assets/style.css        # 59 token CSS (satu sumber tinggi panel)
+├── tests/                      # 29 file test (605 test)
 │   ├── test_bugfixes.py        # Regresi B1..B9 + kontrak arsitektur baru
 │   ├── test_risk_manager.py    # Matematika likuidasi & ukuran posisi
 │   ├── test_paper_engine.py    # Alur buka/tutup posisi
 │   ├── test_position_manager.py# Pemicu otomatis SL/TP/Likuidasi
 │   ├── test_direction_ensemble.py # Invarian agregator arah
 │   ├── test_layout_contract.py # Kontrak ID DOM & token CSS
-│   └── …                       # 8 file lainnya
+│   └── …                       # 23 file lainnya
+├── research/                   # 44 skrip riset + FINDINGS.md (tidak di-import produksi)
 ├── data_store/                 # DB, logs, dan tooling dev (bukan produksi)
 ├── config.yaml                 # Konfigurasi parameter trading
-├── run.py                      # Entry point (629 baris)
+├── run.py                      # Entry point (1113 baris)
 ├── requirements.txt            # Dependensi Python
 ├── .gitignore                  # Pengecualian artefak runtime
-├── PROJECT_CONTEXT.md          # Peta lengkap hasil pembacaan seluruh kode
-└── PLANNING.md                 # Rancangan desain awal (diarsipkan)
+└── docs/ARCHITECTURE.md        # Dokumentasi lengkap (18 bagian, 53 defect)
 ```
 
 ---
@@ -218,7 +228,16 @@ Untuk memverifikasi formula matematika, logika trading, kontrak layout, dan regr
 ```bash
 python -m unittest discover tests
 ```
-*14 file test, 108+ test. Termasuk `test_bugfixes.py` yang mengunci setiap perbaikan B1..B9 — kalau salah satu gagal, itu berarti bug-nya kembali.*
+*29 file test, 605 test. Termasuk `test_bugfixes.py` yang mengunci setiap perbaikan B1..B9 — kalau salah satu gagal, itu berarti bug-nya kembali.*
+
+⚠️ **Catatan jujur tentang cakupan test.** 605 test hijau **tidak berarti
+jalur live aman**. Tidak ada kode produksi yang meng-set `TRADEBOT_LIVE`,
+jadi gerbang live menolak semua order dan belum pernah ada order nyata
+yang terkirim. Selain itu: 12 test membaca *teks source* alih-alih
+menguji perilaku, 2 test secara matematis tidak bisa gagal, dan
+`test_close_short_is_sell` **tidak punya assertion sama sekali** — tepat
+di jalur yang menentukan arah penutupan posisi short. Detail di
+`docs/ARCHITECTURE.md` §16.
 
 ### 5. Mode Maintenance (Opsional)
 Perbaiki data lilin yang rusak tanpa menjalankan bot:
@@ -270,11 +289,14 @@ Parameter perdagangan dapat disesuaikan tanpa mengubah kode program melalui file
 - `risk.max_daily_loss` / `max_drawdown` / `max_open_positions`: circuit breaker rugi harian, batas drawdown, dan jumlah posisi simultan.
 
 **Scalping** (lihat `config.yaml` untuk komentar lengkap per parameter)
-- `min_profit_pct` (0.60%) dan `tight_sl_pct` (0.25%) — target dan stop. Setelah dipotong fee roundtrip 0.10%: `net_tp = 0.50%` vs `net_sl = 0.35%` → rasio 1:1.43, **win rate impas 41.2%**.
+- `min_profit_pct` (0.60%) dan `tight_sl_pct` (0.40%) — target dan stop. Setelah dipotong fee roundtrip 0.09%: `net_tp = 0.51%` vs `net_sl = 0.49%` → rasio 1:1.04, **win rate impas 49.0%**.
+  ⚠️ Hanya **2.0 bps** marginnya, dan hasil riil jauh lebih buruk: winner
+  rata-rata +0.50, loser rata-rata −1.01 → R:R 1:2, butuh **66.8%** win
+  rate, aktual 30.0% (`docs/ARCHITECTURE.md` §6).
 - `min_confidence` (0.40) — confidence minimum untuk **membuka** posisi.
-- `reversal_close_threshold` (0.70) — confidence minimum untuk **membalikkan** posisi aktif. Sengaja lebih tinggi dari `min_confidence`.
+- `reversal_close_threshold` (0.70) — confidence minimum untuk **membalikkan** posisi aktif. ⚠️ Karena plafon confidence ensemble cuma 0.7866, ambang ini sebenarnya berarti **satu agen dengan confidence ≥ 0.82 sudah cukup untuk membalikkan posisi** (§10.2).
 - `max_tick_age_seconds` / `stale_tick_window_seconds` / `stale_tick_min_samples` — parameter guard kualitas tick.
-- `min_hold_seconds` (15) / `max_hold_seconds` (300) — batas umur posisi.
+- `min_hold_seconds` (15) / `max_hold_seconds` (900) — batas umur posisi.
 - `cooldown_after_close_seconds` / `cooldown_after_loss_seconds` — cooldown adaptif per simbol (dikali streak loss).
 
 **Ensemble arah**

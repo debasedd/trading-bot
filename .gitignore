@@ -123,3 +123,9 @@ uncov.txt
 
 # Lock runtime Claude Code
 .claude/scheduled_tasks.lock
+
+# Artefak state SafetyGate dari test_live_engine.py. File per-PID ini
+# dibuat tiap test run tapi tidak pernah dibersihkan saat keluar, jadi
+# menumpuk di version control tanpa pernah dibaca. Lihat docs/ARCHITECTURE.md
+# 16.7.
+data_store/test_live_gate_*.json

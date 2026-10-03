@@ -1,303 +1,178 @@
-# Hasil Evaluasi Strategi — 0XF3CE25
+# Hasil Evaluasi Strategi
 
-Dokumen ini merangkum SEMUA yang sudah diuji, supaya tidak ada
-pekerjaan yang diulang. Terakhir diperbarui: 2026-10-03.
+Ringkasan riset Sept–Okt 2026. Dokumentasi arsitektur ada di
+[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §15. File ini hanya
+catatan hasil.
 
----
-
-## TL;DR
-
-**Edge ditemukan.** Cross-sectional momentum (long 5 simbol terkuat,
-short 5 terlemah, rebalance tiap 12 jam) menghasilkan t=2.34 dari 415
-rebalance selama 208 hari, dengan p<0.002 terhadap 500 random baseline.
-Positif di kedua rezim (bull dan bear), 4/4 walk-forward test folds
-positif, max drawdown 8.3%.
-
-**Syarat kritis: HARUS pakai limit orders (maker fee 1.5 bps).** Taker
-fee (4.5 bps) menghancurkan edge — t turun dari 2.34 ke 0.60.
+**Status: satu edge ditemukan dan belum dideploy.** Modulnya ada di
+`trading/cross_sectional.py` tapi **tidak terhubung ke sistem mana pun**
+(§17.1 di dokumen utama).
 
 ---
 
-## Fase 1: Bug fixes dan stabilisasi (Sept 2026)
+## Data
 
-### 6 bug kritis diperbaiki
+Sumber: Hyperliquid REST `candleSnapshot`, tanpa API key.
+**208 hari, 21 simbol, 105.044 candle 1h** — 2026-03-09 s/d 2026-10-03.
 
-1. **Kill switch tidak pernah reset** — `SafetyGate.engaged` hanya set
-   `True`, tidak pernah bisa di-reset. Diperbaiki: `disengage_kill_switch()`,
-   persistence via `DayCounters.engaged`, env var 3-state.
+Tersimpan di `data_store/historical_candles.db`, tabel `hist_candles`.
+Hanya interval `1h` yang punya cakupan 21 simbol; 15m/5m/1m cuma 4 simbol.
 
-2. **Emergency_flat tidak pernah dipanggil** — routine lengkap tapi
-   unwired. Diperbaiki: auto-trigger saat SL attach gagal.
-
-3. **Live poll loop outlive shutdown** — `_live_task` tidak di-cancel.
-   Diperbaiki: explicit cancel + await dengan timeout.
-
-4. **Close pops position tanpa cek fill** — `engine.py:314` pop
-   posisi saat close dikirim, bukan saat terisi. Diperbaiki: guard
-   `filled_size > 0`.
-
-5. **Logger menelan traceback** — `format()` panggil `getMessage()`
-   tapi tidak `formatException`. Diperbaiki.
-
-6. **Exit fills tanpa biaya** — entry charge 4 bps, exit charge 0.
-   Diperbaiki: `close_fill_price()` di semua 5 jalur close.
-
-### Test suite
-
-- 566 → 605 test, semua hijau
-- PID-scoped DB paths menghilangkan flakiness paralel
-- 4 shadowed test di-unshadow
-
-### File yang dimodifikasi
-
-`trading/fill_cost.py` (NEW), `trading/position_manager.py`,
-`trading/paper_engine.py`, `trading/risk_manager.py`,
-`trading/live/executor.py`, `trading/live/engine.py`,
-`trading/live/safety.py`, `agents/decision_agent.py`, `run.py`,
-`core/config.py`, `core/logger.py`, `database/db.py`,
-`database/models.py`, `database/repository.py`, `config.yaml`,
-`data/order_book_recorder.py` (NEW), dan 12 file test.
+> **Jebakan API.** `candleSnapshot` **memotong hasil di ~5.000 candle tanpa
+> memberi tahu**. Request 5 hari untuk 1m meminta 7.200 dan hanya ~5.000
+> yang kembali — tanpa error, tanpa penanda truncation. Gejalanya: DB terisi,
+> nol error, tapi cuma 4 hari history untuk 1m padahal minta 400.
+> Chunk harus dihitung dari interval: `chunk_ms = 4200 × INTERVAL_MS[interval]`
+> (1m = 2.9 hari/request, 1h = 175 hari).
 
 ---
 
-## Fase 2: Strategi directional — semua gagal (Sept-Okt 2026)
+## Fase 1 — Semua strategi directional GAGAL
 
-### Data
-
-- **Sumber**: Hyperliquid REST API, tanpa API key
-- **Volume**: 21 simbol, 208 hari (2026-03-09 s/d 2026-10-03), 105.044 candle 1h
-- **Rezim**: dua jendela 30 hari dipilih otomatis — bullish (+0.06%/hari)
-  dan bearish (−0.04%/hari), TIDAK overlap
-
-### 3.000+ konfigurasi directional diuji
-
-| Jalur | Konfigurasi | Hasil |
+| Jalur | Skala | Hasil |
 |---|---|---|
-| Time-series momentum | 1.008 + 2.160 grid | Semua gagal mirror test |
-| Swing 2 jam (SL 2%/TP 4%) | 6 kandidat | +0.39/trade bull, **−1.02/trade bear** |
-| EMA trend | 3 varian SL/TP/hold | +0.34 s/d +0.73 bull, **−1.03 s/d −1.11 bear** |
-| Momentum dua arah | 2 threshold | **Negatif di kedua rezim** |
-| OFI (Order Flow Imbalance) | Q1 fade | t turun dari +3.72 ke +0.83, gagal mirror |
-| RSI reversal | Grid | Tidak signifikan |
+| Time-series momentum | 1.008 + 2.160 kandidat | semua gagal |
+| Swing horizon panjang | 450 kandidat | menang di train, mati di validasi |
+| **Swing 2 j, SL 2% / TP 4%** | 6 kandidat | **+0.39/trade bull, −1.02/trade bear** |
+| **EMA trend, 3 varian** | — | **+0.34…+0.73 bull, −1.03…−1.11 bear** |
+| Momentum dua arah | 2 ambang | negatif di kedua rezim |
+| **OFI Q1 fade** | 24 jam data | t +3.72 → **gagal mirror test** |
+| RSI reversal | grid | tidak signifikan |
+| Regime gate | 12 kombinasi | semua negatif |
+| Regime trend filter | 4 mode × 3 fold | drift tidak bisa dieksploitasi |
 
-### Kenapa semua gagal
+**Penyebabnya konsisten:** rugi di bearish **1.4–3.2× lebih besar** dari
+keuntungan di bullish. `FINDINGS.md` versi lama menyebutnya *"leverage
+tersembunyi ke arah risiko yang salah"*. Gate rezim ketat mengurangi
+opportunity tanpa memperbaiki ekspektasi.
 
-Semua strategi di atas **directional** — long kalau bullish, short kalau
-bearish. Mereka menanggung arah pasar. Di bearish, rugi 1.4–3.2× lebih
-besar dari keuntungan di bullish. Ini bukan "kurang optimal" — ini
-**leverage tersembunyi ke arah risiko yang salah**.
-
-### Gate rezim tidak menolong
-
-12 kombinasi threshold (0.0–1.0%) × jendela (12–48h), semua membaca
-return indeks historis (bisa dideploy). **Semua negatif.** Gate ketat
-mengurangi opportunity tanpa memperbaiki ekspektasi.
-
-### File riset fase 2
-
-| File | Isi |
-|---|---|
-| `research/bt.py` | Backtest harness dengan biaya produksi |
-| `research/fetch_historical.py` | Download 400 hari dari Hyperliquid |
-| `research/regime_split.py` | Pemisahan rezim bull/bear otomatis |
-| `research/test_reality.py` | 6 kandidat di 2 rezim nyata |
-| `research/regime_gate.py` | Gate rezim — 12 kombinasi |
-| `research/mirror_test_final.py` | Mirror test kandidat swing |
-| `research/mirror_ofi.py` | Mirror test OFI |
-| `research/spread_stability.py` | Distribusi spread per simbol |
-| `research/ofi_test.py` | Korelasi OFI vs forward return |
+Empat aturan anti-look-ahead yang dipakai seluruh harness:
+1. Isi di bar berikutnya, bukan bar yang menghasilkan sinyal
+2. Rank dari trailing, tahan ke depan
+3. Gate rezim hanya baca return indeks historis
+4. **SL diperiksa sebelum TP** — urutan high/low intrabar tak diketahui
 
 ---
 
-## Fase 3: Market-neutral cross-sectional — pertama salah, lalu benar (Okt 2026)
+## Fase 2 — Cross-sectional momentum: EDGE TERVERIFIKASI
 
-### Sesi pertama (Sonnet): bug indeks kolom
-
-Sesi Sonnet menguji cross-sectional dengan `cs_close = r[5]` — itu
-**volume, bukan close** (close di indeks 4). Hasilnya +9.2M USDT dari
-10K, winrate 93%, t=20+. Semuanya palsu.
-
-Setelah diperbaiki, hasilnya:
-- Momentum trail=20h hold=6h: t=0.60 (dari "t=20.75")
-- Semua config trail=6h: negatif
-
-Cross-sectional momentum trail=20h hold=6h hanya menghasilkan net +248
-USDT, t=0.07 — **biaya makan 83.7% gross.**
-
-### Sesi kedua (Opus): factor sweep benar
-
-**250 konfigurasi** diuji: 4 faktor × 5 trailing window × 5 holding
-period × 2 cost model. Dengan indeks kolom yang benar.
-
-| Faktor | Deskripsi | Hasil |
-|---|---|---|
-| Momentum | Long winners, short losers | **t=2.34 di maker** |
-| Reversal | Long losers, short winners | t<0 setelah fix |
-| Vol-adjusted momentum | Return/realized_vol | t=1.71 terbaik |
-| Distance from high | Oversold ranking | t=2.01 di maker |
-
-### Konfigurasi yang lolos
-
-**Config #1: momentum trail=12h hold=12h maker**
+Dari `factor_sweep.py` — 250 konfigurasi, 4 faktor × 5 trailing × 5 holding
+× 2 cost model, indeks kolom sudah dikoreksi.
 
 ```
-t-stat     : +2.34
-Net P&L    : +4.460 USDT dari 10.000 (44.6% dalam 208 hari)
-Annualized : ~78%
-Sharpe     : ~3.1
-Win rate   : 52.3%
-Max DD     : 8.3%
+faktor    : cross-sectional momentum, trailing 12j, hold 12j
+posisi   : long 5 terkuat + short 5 terlemah, simultan, dollar-neutral
+n         : 415 rebalances selama 208 hari
+t-stat    : +2.34          p < 0.002 (0 dari 500 baseline acak)
+Net P&L   : +4.460 USDT dari 10.000  (44.6% dalam 208 hari)
+Sharpe    : ~3.1          Win rate : 52.3%      Max DD : 8.3%
+Biaya     : maker 2.2 bps/leg      Leverage : 1x
+Reversed  : t = −4.25 (konfirmasi arah)      OOS 2nd half : t = 2.11
 ```
 
-**Config #2: dist_from_high trail=12h hold=72h maker**
-
+Walk-forward expanding window — **4/4 fold positif, dan edge menguat**:
 ```
-t-stat     : +2.01
-Net P&L    : +4.840 USDT dari 10.000
-Win rate   : 56.5%
-Max DD     : 12.1%
-Catatan    : hanya 69 sampel — less reliable
+Fold 4 → +296    Fold 5 → +585    Fold 6 → +766    Fold 7 → +1.397
 ```
 
-### Verifikasi config #1
+Rezim: bull +1.045 (t 1.61) · bear +1.441 (t 1.45). Sub-periode 5/7 bulan positif.
 
-| Test | Hasil |
+Config #2 (dist-from-high, trail 12j / hold 72j): t 2.01, net +4.840, WR 56.5%,
+max DD 12.1% — tapi hanya 69 sampel, "less reliable".
+
+### ⛔ Syarat menentukan: HARUS maker
+
+| Biaya/leg | t-stat |
 |---|---|
-| Monte Carlo 500 seeds | **0/500 random > t=2.34** (p=0.000) |
-| Reversed direction | **t=−4.25** (konfirmasi searah) |
-| Walk-forward expanding window | **4/4 test folds positif** |
-| Regime bull | +1.045 USDT (t=+1.61) |
-| Regime bear | +1.441 USDT (t=+1.45) |
-| Sub-periods (7 bulan) | 5/7 positif |
-| Max drawdown | 8.3% |
-| Taker cost (6.2 bps) | t=0.60 — **TIDAK survive** |
-| Maker cost (2.2 bps) | t=2.34 — survive |
+| maker 2.2 bps | **2.34 — bertahan** |
+| taker 6.2 bps | **0.60 — mati** |
 
-### Walk-forward expanding window
-
-```
-Fold 4: train bulan 1-3, test bulan 4  → net +296   (positif)
-Fold 5: train bulan 1-4, test bulan 5  → net +585   (positif)
-Fold 6: train bulan 1-5, test bulan 6  → net +766   (positif)
-Fold 7: train bulan 1-6, test bulan 7  → net +1.397 (positif)
-```
-
-Edge MEMPERKUAT seiring waktu — fold terakhir yang paling kuat.
-
-### Kenapa ini berhasil dan directional gagal
-
-1. **Dollar-neutral secara konstruksi** — long dan short saling
-   meniadakan exposure ke arah pasar. Rezim bull atau bear menggerakkan
-   semua simbol bersamaan, jadi portfolio net-nya mendekati nol.
-
-2. **Edge datang dari dispersi antar-simbol**, bukan dari prediksi arah.
-   Simbol yang baru naik cenderung terus naik relatif terhadap yang baru
-   turun — itu momentum cross-sectional, salah satu faktor yang paling
-   terdokumentasi di literatur keuangan.
-
-3. **Trailing 12 jam** lebih pendek dari yang diuji sesi sebelumnya
-   (20–72 jam). Window lebih pendek menangkap momentum yang lebih segar.
-
-### File riset fase 3
-
-| File | Isi |
-|---|---|
-| `research/factor_sweep.py` | Sweep 250 konfigurasi, 4 faktor |
-| `research/deep_audit.py` | Monte Carlo 500 seeds, reversed, walk-forward |
-| `research/walkforward_validation.py` | Expanding window + regime test |
-| `research/audit_reversal.py` | Diagnosis bug indeks kolom |
-| `research/market_neutral.py` | Sesi Sonnet — BERMASALAH (bug r[5]) |
-| `research/audit_neutral.py` | Audit sesi Sonnet |
-| `research/robust_neutral.py` | Thinning test sesi Sonnet |
-| `research/leverage_audit.py` | Leverage sensitivity |
-| `research/lookahead_check.py` | Look-ahead verification |
-| `research/deep_neutral.py` | Full 208 hari sweep |
-| `research/horizon_scan.py` | Horizon panjang |
-| `research/final_audit.py` | Kontrol acak + reversed + sub-periode |
-| `research/lower_turnover.py` | Turnover vs biaya |
-| `research/regime_conditioning.py` | Conditioning pada momentum/dispersi |
+Contohnya di `trading/cross_sectional.py`, tapi sistem produksi **tidak punya
+jalur maker sama sekali** — semua fill kena taker, dan `SPREAD_FLOOR`
+(0.7 bps, satu-satunya konstanta yang memodelkan fill maker) **nol
+pemanggil**. Hooking modul itu apa adanya ke `PaperTradingEngine` akan
+menagih 9 bps fee + ≥2.4 bps slippage terhadap edge ~0.18/trade.
 
 ---
 
-## Strategi final: cross-sectional momentum
+## Kesalahan yang hampir lolos
 
-### Cara kerja
+Sesi pertama memakai `cs_close = r[5]` — itu **volume, bukan close**
+(close di indeks 4). Ranking berdasarkan volume memberi:
 
 ```
-Setiap 12 jam:
-  1. Hitung return trailing 12 jam untuk 21 simbol
-  2. Rank dari terendah ke tertinggi
-  3. LONG 5 simbol dengan momentum tertinggi
-  4. SHORT 5 simbol dengan momentum terendah
-  5. Tutup posisi dari rebalance sebelumnya
++9.2M USDT dari modal 10.000    win rate 93%    t = 20+
 ```
 
-### Parameter
-
-| Parameter | Nilai | Alasan |
-|---|---|---|
-| Trailing window | 12 jam | Optimal dari sweep; 6h terlalu noisy, 20h+ terlalu lambat |
-| Holding period | 12 jam | Sama dengan trail — natural rebalance cycle |
-| N per side | 5 | 3 terlalu concentrated, 8+ terlalu diluted |
-| Leverage | 1x | Edge tipis (~10 bps/rebalance), leverage memperbesar drawdown |
-| Order type | **LIMIT** | WAJIB — taker fee membunuh edge |
-| Cost per leg | 2.2 bps | Maker 1.5 bps + spread 0.7 bps |
-
-### Syarat deploy
-
-1. **HARUS pakai limit orders** — maker fee 1.5 bps. Taker fee (4.5 bps)
-   menghancurkan edge (t turun dari 2.34 ke 0.60).
-2. **Paper test minimal 2 minggu** sebelum live.
-3. **Mulai dengan modal kecil** (1.000 USDT).
-4. **Rebalance tepat waktu** — terlambat menggeser edge.
-5. **Monitor winrate** — kalau turun di bawah 48% selama 30+ rebalance,
-   evaluasi ulang.
-
-### Implementasi
-
-Modul `trading/cross_sectional.py` sudah dibuat dengan:
-- `CrossSectionalStrategy` — logic ranking dan rebalance
-- `PriceHistory` — penyimpanan harga trailing
-- `PortfolioTarget` — target portfolio per rebalance
-- `get_desired_positions()` — interface ke DecisionAgent
-
----
-
-## Yang TIDAK diuji dan kenapa
-
-| Jalur | Alasan tidak diuji |
-|---|---|
-| Order flow microstructure | Data order book hanya 25 jam, cuma bullish |
-| Funding rate carry | Butuh data funding historis yang lengkap |
-| Machine learning | Overfitting risk tinggi dengan 208 hari data |
-| Sub-1h timeframe | API Hyperliquid membatasi 5.000 candle/request |
-| Multi-factor combination | Overfitting risk — lebih baik satu faktor yang kuat |
+Semuanya palsu. Setelah dikoreksi, config yang sama memberi **t = 0.60**,
+dan semua `trail=6h` negatif. `lower_turnover.py` mengukur kerabatnya:
+gross +1519 dari 205 rebalances sebelum biaya, +248 sesudah — **biaya
+memakan 83.7% dari gross**.
 
 ---
 
 ## Biaya terukur
 
-Dari `research/spread_stability.py` (21.000 snapshot order book):
+Dari 105.040 snapshot order book nyata (`data_store/order_book.db`):
 
 | Simbol | Median half-spread | Fee taker | Total taker/leg |
 |---|---|---|---|
-| BTC | 0.12 bps | 4.5 bps | 5.6 bps |
-| ETH | 0.37 bps | 4.5 bps | 5.9 bps |
-| SOL | 0.84 bps | 4.5 bps | 6.3 bps |
-| ENA | 1.97 bps | 4.5 bps | 7.5 bps |
+| BTC / HYPE | 0.12 bps | 4.5 bps | 5.6 bps |
+| ETH | 0.37 | 4.5 | 5.9 |
+| XRP | 0.66 | 4.5 | 6.2 |
+| ZEC | 0.70 | 4.5 | 6.4 |
+| SOL | 0.84 | 4.5 | 6.3 |
+| NEAR | 1.13 | 4.5 | 6.3 |
+| LIT | 1.28 | 4.5 | 6.6 |
+| PUMP | 1.75 | 4.5 | 7.2 |
+| ENA | 1.97 | 4.5 | 7.5 |
 
-Maker fee: 1.5 bps (Hyperliquid base tier). Total maker/leg: 2.2–3.5 bps.
+Rentang **16×** antar simbol. Spread juga berkorelasi dengan volatilitas
+(1.72 bps median untuk simbol bergejolak vs 0.37 untuk yang tenang, 4.64×) —
+jadi asumsi 3 bps konstan terlalu optimis **pada saat spread paling mahal**,
+yaitu saat kerugian paling besar.
+
+Angka-angka ini sudah jadi `FILL_HALF_SPREAD_FLOOR_BY_SYMBOL` di
+`trading/fill_cost.py:78-89`.
 
 ---
 
-## Kronologi keputusan
+## Yang tidak diuji
 
-1. **Sept 25**: 6 bug kritis diperbaiki, test suite stabil
-2. **Sept 26-28**: 3.000+ konfigurasi directional, semua gagal mirror test
-3. **Sept 29**: OFI test — edge terlihat, gagal di mirror
-4. **Sept 30**: Download 208 hari data historis dari Hyperliquid
-5. **Okt 1**: Regime test — semua kandidat rugi di bearish
-6. **Okt 2**: Gate rezim — tidak menolong
-7. **Okt 3 (Sonnet)**: Market-neutral — hasil palsu karena bug r[5]
-8. **Okt 3 (Opus)**: Factor sweep 250 config — **edge ditemukan**
-9. **Okt 3 (Opus)**: Deep audit — Monte Carlo p<0.002, walk-forward 4/4
+| Jalur | Alasan |
+|---|---|
+| Mikrostruktur order flow | Data order book cuma ~25 jam, dan hanya bullish |
+| Funding rate carry | Butuh data funding historis lengkap |
+| Machine learning | Risiko overfitting tinggi dengan 208 hari |
+| Sub-1 jam | Plafon 5.000 candle/request |
+| Multi-faktor | Overfitting; lebih baik satu faktor kuat |
+
+---
+
+## Syarat deploy (kalau nanti diimplementasikan)
+
+1. **Limit orders WAJIB** — taker membunuh edge
+2. Minimal 12 simbol dengan 12 jam history (kode butuh `N_SIDE*2+2 = 12`;
+   `config.symbols` sekarang hanya 10)
+3. Paper test ≥ 2 minggu sebelum live
+4. Mulai kecil (1.000 USDT)
+5. Rebalance tepat waktu — telat menggeser edge
+6. Pantau win rate; di bawah 48% selama 30+ rebalance, evaluasi ulang
+
+---
+
+## Kronologi
+
+1. **25 Sep** — 6 bug kritis live-diperbaiki, 566 → 605 test
+2. **26–28 Sep** — 3.000+ konfigurasi directional, semua gagal mirror test
+3. **29 Sep** — OFI: edge terlihat, gagal mirror (drift, bukan alpha)
+4. **30 Sep** — Download 208 hari data historis
+5. **1 Okt** — Regime test: semua kandidat rugi di bearish
+6. **2 Okt** — Gate rezim: tidak menolong
+7. **3 Okt** — Market-neutral: hasil palsu (`r[5]` = volume)
+8. **3 Okt** — Factor sweep 250 config: **edge ditemukan**
+9. **3 Okt** — Deep audit: Monte Carlo p<0.002, walk-forward 4/4
+
+Catatan: 11 dari 44 skrip riset **tidak tracked di git**, dan punya
+kontaminasi loader `r[5]` di atas. Angka di sini berasal dari
+`factor_sweep.py` yang sudah dikoreksi — bukan dari skrip contaminated.

@@ -1,24 +1,43 @@
 # Dokumentasi 0XF3CE25
 
-## Baca ini
+Satu dokumen: **[`ARCHITECTURE.md`](ARCHITECTURE.md)** — 18 bagian,
+dibaca baris-per-baris dari source pada commit `e49011a`.
 
-Dokumen teknis ada di **[`technical/`](technical/)** — enam dokumen
-dibangun dari source saat ini, dengan setiap klaim diverifikasi terhadap
-file yang disebutnya.
+| # | Bagian | Isi |
+|---|---|---|
+| 1 | Apa ini dan keadaannya sekarang | Angka repo, performa terukur, ringkasan jujur |
+| 2 | Cara menjalankan | CLI, env var, exit code |
+| 3 | Arsitektur | Lapisan, thread/task, scheduler, kanal mati |
+| 4 | Alur data end-to-end | WS → kernel → ensemble → keputusan → fill → UI |
+| 5 | Konfigurasi | Lapisan config, pemetaan YAML, 3 validator, key mati |
+| 6 | Ekonomi | Model biaya, biaya terukur per simbol, R:R, breaker, akuntansi |
+| 7 | Paper path | Rejection ladder, guard tick, lifecycle, 7 jalur tutup |
+| 8 | Live path | Client, safety gate, kill switch, 7 jalur, defect blocking |
+| 9 | Data layer | Hyperliquid, multi-tier, rekorder, skema DB, repository |
+| 10 | Analysis layer | Indikator, ensemble (yang hidup), volatilitas, mati |
+| 11 | Agen | 5 agen + matriks interval |
+| 12 | Dashboard | Grid, 19 callback, token CSS, figure, empty state |
+| 13 | Ekstensi native C++ | Ekspor, paritas, parser, binary, 4 cacat |
+| 14 | Machine learning | Artefak, 5 train/serve skew, fallback, backtester |
+| 15 | Riset | Apa yang gagal, edge yang terverifikasi, kesalahan yang lolos |
+| 16 | Test suite | Angka, test tanpa assertion, test tak bisa gagal |
+| 17 | Daftar defect | 53 temuan, urut dampak |
+| 18 | Yang tidak diverifikasi | 10 hal yang tidak diklaim |
 
-| Dokumen | Isi |
-|---|---|
-| [`technical/01-overview.md`](technical/01-overview.md) | Apa ini, arsitektur berlapis, topologi thread, cara menjalankan, glosarium jargon |
-| [`technical/02-dataflow.md`](technical/02-dataflow.md) | Alur data lengkap, paper vs live, diagram urutan |
-| [`technical/03-subsystems.md`](technical/03-subsystems.md) | Referensi 48 file, semua simbol verbatim + `file:line` |
-| [`technical/04-risk-and-accounting.md`](technical/04-risk-and-accounting.md) | Batas risiko, model biaya, aritmetika P&L, cara kehilangan uang |
-| [`technical/05-native-and-tests.md`](technical/05-native-and-tests.md) | Ekstensi C++/pybind11, build, numerik, inventaris tes |
-| [`technical/06-operating.md`](technical/06-operating.md) | Mode operasi, recipe ekstensi, jebakan |
+Lampiran A: peta file. Lampiran B: perintah verifikasi — semua klaim di
+dokumen bisa dicek ulang.
 
-## Arsip
+## Ringkas kalau hanya punya 5 menit
 
-[`context/ARCHIVED-2026-09-28.md`](context/ARCHIVED-2026-09-28.md) adalah
-dokumentasi lama. **Klaimnya sudah terbukti salah di banyak hal penting** —
-file itu ditulis sebelum perbaikan live-trading dan sebelum akuntansi P&L
-diperbaiki. Ada daftar lengkap apa yang berubah di bagian atasnya. Baca
-hanya untuk menelusuri sejarah keputusan, bukan untuk memahami sistem.
+1. **Live tidak pernah berjalan.** Tidak ada kode yang meng-set
+   `TRADEBOT_LIVE`, jadi `SafetyGate` menolak semua order. Tiga defect
+   blocking lain ada di jalur itu (§8.2, §8.8).
+2. **Paper menghapus uang.** 250 trade, PF 0.213, win rate 30% terhadap
+   66.8% yang dibutuhkan. R:R riil 1:2, bukan 1:1 yang diklaim config (§6).
+3. **Edge yang benar tidak terhubung.** `trading/cross_sectional.py`
+   (t=2.34, tervalidasi 4/4 walk-forward) tidak di-import siapa pun (§17.1).
+4. **Kernel C++ bisa membunuh proses.** `ingest_l2` dengan input salah
+   →
+   `exit 127`, tidak bisa di-catch (§13.8).
+5. **12 test baca source text; 2 test tidak bisa gagal; 1 test tidak punya
+   assertion** — dan yang terakhir itu tepat di jalur tutup short live (§16).
