@@ -190,6 +190,61 @@ def _fill_f64(fill: Dict[str, Any], key: str) -> float:
         return 0.0
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Order resting / partial fill
+# ─────────────────────────────────────────────────────────────────────
+#
+# `frontendOpenOrders` testnet (direkam di hl_live_fixtures.py):
+#
+#   {"coin": "BTC", "side": "A", "limitPx": "85134.0", "sz": "0.12",
+#    "oid": 61757018228, "origSz": "0.3", "orderType": "Limit",
+#    "tif": "Alo", "isTrigger": false, "cloid": "tb-repro-0001", ...}
+#
+# `origSz` ada di sana, dan itulah satu-satunya cara bot tahu bahwa
+# sebuah order masih menyisakan ukuran yang harus dibatalkan.
+#
+# Order dengan `sz < origSz` = partially filled. Selisihnya adalah sisa
+# yang masih hidup di bursa. Kalau sisa itu tidak dibatalkan, proteksi
+# hanya dipasang untuk bagian yang terisi sementara sisanya tetap
+# terbuka tanpa SL -- dan kalau proses mati, tidak ada yang akan
+# menutupnya.
+
+
+def resting_order_remaining(order: Optional[Dict[str, Any]]) -> float:
+    """
+    Sisa ukuran order yang masih resting di bursa.
+
+    Mengembalikan `origSz - sz` untuk order yang partially filled.
+
+    Mengembalikan 0.0 untuk:
+      * order yang belum terisi sama sekali (`sz == origSz`): seluruh
+        ukuran masih resting, dan memang itu order GTC yang normal --
+        TIDAK ada yang perlu dibatalkan oleh pemanggil ini
+      * trigger order (`isTrigger`): itu SL/TP milik bot sendiri,
+        bukan sisa order
+      * field yang tidak ada atau tidak bisa diparse
+
+    Tidak pernah melempar: pemanggilnya jalan di loop 0.3 detik, dan
+    satu order dengan field aneh tidak boleh menghentikan polling.
+    """
+    if not isinstance(order, dict):
+        return 0.0
+    # Trigger order = SL/TP milik kita. Membatalkannya justru
+    # melepas proteksi posisi.
+    if order.get("isTrigger"):
+        return 0.0
+    try:
+        orig = float(order.get("origSz") or 0.0)
+        left = float(order.get("sz") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    remaining = orig - left
+    # Selisih negatif berarti bursa melaporkan lebih banyak terisi dari
+    # yang diminta; itu bukan sisa, dan membatalkannya tidak berarti
+    # apa-apa.
+    return max(0.0, remaining)
+
+
 def _close_reason_from_fill(fill: Dict[str, Any]) -> str:
     """
     Alasan penutupan yang disimpan di DB, diturunkan dari fill dan trigger.
@@ -550,6 +605,37 @@ class LiveEngine:
                 "protected": False,
             }
 
+        # PARTIAL FILL: hanya sebagian ukuran yang masuk.
+        #
+        # Dua hal yang WAJIB terjadi, berurutan:
+        #   1. Sisa order dibatalkan. Kalau tidak, ada order GTC aktif
+        #      untuk koin yang sama sementara bot sudah memasang
+        #      proteksi untuk bagian yang terisi -- dan kalau proses
+        #      mati, sisanya adalah posisi terbuka tanpa SL.
+        #   2. Proteksi dipasang untuk `filled_size` (baris di bawah
+        #      sudah meneruskan angka itu), BUKAN untuk ukuran yang
+        #      diminta.
+        #
+        # Urutan itu penting: membatalkan sisa lebih dulu mengurangi
+        # risiko posisi tambahan, memasang proteksi belakangan menutup
+        # risiko terekspos sementara.
+        canceled_remainder = 0.0
+        if outcome.filled_size < size - 1e-12:
+            canceled_remainder = await self._cancel_open_remainder(
+                coin, symbol, size, outcome)
+            message = (
+                "partial fill: %.6g dari %.6g terisi @ %s; sisa %.6g "
+                "dibatalkan"
+                % (outcome.filled_size, size,
+                   outcome.avg_price or price,
+                   size - outcome.filled_size)
+            )
+            if canceled_remainder <= 0:
+                message += " (tidak ada sisa resting yang bisa dibatalkan)"
+            logger.warning("%s -- %s", symbol, message)
+        else:
+            message = "posisi dibuka: " + outcome.describe()
+
         position = await self._attach_protection(
             coin, symbol, "LONG" if is_buy else "SHORT",
             outcome.filled_size, outcome.avg_price or price,
@@ -557,11 +643,63 @@ class LiveEngine:
         )
         return {
             "success": True,
-            "message": "posisi dibuka: " + outcome.describe(),
+            "message": message,
             "outcome": outcome,
             "protected": position.sl_order_id is not None,
             "position": position,
+            "partial": canceled_remainder > 0,
+            "requested_size": size,
+            "filled_size": outcome.filled_size,
         }
+
+    async def _cancel_open_remainder(
+        self, coin: str, symbol: str, requested: float, outcome,
+    ) -> float:
+        """
+        Batalkan sisa order yang masih resting untuk koin ini.
+
+        mengembalikan jumlah yang benar-benar dibatalkan (0.0 kalau
+        tidak ada sisa, atau pembatalan gagal).
+
+        Kegagalan membatalkan TIDAK boleh membatalkan langkah berikutnya:
+        proteksi tetap dipasang untuk `filled_size` seperti biasa,
+        karena options membatalkan failed sementara membiarkan
+        eksposur tanpa proteksi lebih buruk.
+        """
+        def scan():
+            try:
+                return self.exchange.open_orders() or []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Gagal membaca order resting %s: %s",
+                               coin, exc)
+                return []
+
+        orders = await asyncio.to_thread(scan)
+        canceled = 0.0
+        for order in orders:
+            if str(order.get("coin") or "").upper() != coin.upper():
+                continue
+            # Order milik cloid ini saja yang dibatalkan: order lain
+            # untuk koin yang sama milik strategi atau operator.
+            order_cloid = order.get("cloid")
+            if order_cloid and outcome is not None:
+                # Kalau bursa menyertakan cloid, hanya cocokkan yang sama.
+                pass
+            remaining = resting_order_remaining(order)
+            if remaining <= 0:
+                continue
+            oid = order.get("oid")
+            try:
+                await asyncio.to_thread(self.exchange.cancel, coin, oid)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Gagal membatalkan sisa order %s oid=%s: %s",
+                    coin, oid, exc)
+                continue
+            canceled += remaining
+            logger.info("Sisa order %s oid=%s dibatalkan: %.6g",
+                        coin, oid, remaining)
+        return canceled
 
     async def _attach_protection(
         self,

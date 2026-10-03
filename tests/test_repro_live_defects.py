@@ -309,6 +309,8 @@ class TestReconcileSymbolKeyMismatch(unittest.IsolatedAsyncioTestCase):
 # persis jebakan yang hampir menimpa saya di Fase 0.
 # ═══════════════════════════════════════════════════════════════════
 
+# DEFECT 4 — SUDAH DIPERBAIKAN di item (c) Fase 1.
+# Testnya pindah ke tests/test_partial_fill.py sebagai test biasa.
 # ═══════════════════════════════════════════════════════════════════
 # DEFECT 4 — partial fill tidak ditangani
 #
@@ -322,88 +324,13 @@ class TestReconcileSymbolKeyMismatch(unittest.IsolatedAsyncioTestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 
-@known_broken("DEFECT-4 partial fill tidak ditangani")
-class TestPartialFillUnhandled(unittest.IsolatedAsyncioTestCase):
-    """Reproduksi: partial fill harus ditangani, bukan diabaikan diam-diam."""
 
-    async def test_partial_fill_leaves_unprotected_remainder(self):
-        """
-        Order 0.01 terisi 0.004 -> sisa 0.006 tetap resting tanpa SL.
-
-        Yang diuji: LiveEngine.submit_order sungguhan. Yang di-fake hanya
-        bursa, dan angka filled-nya dikembalikan lewat OrderOutcome yang
-        sama seperti parser produksi memakai.
-        """
-        from trading.live.client import OrderOutcome
-
-        requested = 0.01
-        filled = 0.004
-
-        class _ExchangePartialFill:
-            def __init__(self):
-                self.cancelled = []
-                self.protected = []
-
-            def free_collateral(self):
-                return 10000.0
-
-            def total_notional(self):
-                return 0.0
-
-            def symbol_notional(self, coin):
-                return 0.0
-
-            def set_leverage(self, coin, leverage, is_cross=True):
-                return {"ok": True}
-
-            def place_limit_order(self, coin, is_buy, size, price,
-                                  reduce_only=False, cloid=None):
-                return OrderOutcome(ok=True, filled_size=filled,
-                                    avg_price=price, order_id=42)
-
-            def place_trigger_order(self, coin, is_buy, size, trigger_price,
-                                    tpsl, reduce_only=True):
-                self.protected.append((tpsl, size))
-                return OrderOutcome(ok=True, filled_size=size, oid=1)
-
-            def cancel(self, coin, oid):
-                self.cancelled.append(oid)
-                return "cancelled"
-
-            def cancel_all(self, coin):
-                return "cancelled"
-
-            def open_orders(self):
-                return [{"coin": "BTC", "oid": 42,
-                         "sz": str(requested - filled), "limitPx": "85000.0"}]
-
-            def positions(self):
-                return []
-
-            def mid_price(self, coin):
-                return 85000.0
-
-        ex = _ExchangePartialFill()
-        engine = LiveEngine(gate=clean_gate(), exchange=ex, cfg=LiveConfig())
-
-        result = await engine.submit_order(
-            "BTC", "BTC/USDT:USDT", True, requested, 85000.0,
-            stop_loss=84000.0, take_profit=87000.0, leverage=5,
-            cloid="tb-repro-partial",
-        )
-
-        # Sisa order partial HARUS dibatalkan, atau setidaknya dilaporkan.
-        self.assertTrue(
-            ex.cancelled,
-            "sisa order partial (%.4f) tidak pernah dibatalkan; proteksi "
-            "hanya dipasang untuk %.4f sementara %.4f tetap resting"
-            % (requested - filled, filled, requested - filled),
-        )
-        self.assertIn(
-            "partial", str(result.get("message", "")).lower(),
-            "partial fill tidak dilaporkan eksplisit: %r" % result.get("message"),
-        )
-
+# DEFECT 4 — SUDAH DIPERBAIKAN di item (c) Fase 1.
+#
+# Reproduksinya pindah ke tests/test_partial_fill.py sebagai test
+# biasa (9 test). Test lama di sini dihapus karena isinya duplikat:
+# keduanya menguji bahwa sisa order partial dibatalkan dan proteksi
+# mengikuti filled_size.
 
 # ═══════════════════════════════════════════════════════════════════
 # DEFECT 5 — tidak ada lookup order by cloid, cancel() tidak terpakai
