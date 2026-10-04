@@ -199,14 +199,46 @@ class ExecutionAgent(BaseAgent):
         Jalankan SEBELUM `_scalp_take_profit` dan ambangnya DI BAWAH
         `min_profit_pct`. Kalau keduanya sama, TP menyala lebih dulu di siklus
         yang sama dan seluruh logika ini tidak pernah memberi efek.
+
+        ── STATUS DI MODE LIVE: DINONAKTIFKAN ──
+
+        Ini SEBELUMNYA menulis SL baru ke SQLite tanpa menyentuh trigger
+        di bursa. Akibatnya DB dan bursa berbeda: yang tampil di dashboard
+        sudah "di breakeven", sementara order trigger yang benar-benar
+        melindungi posisi masih di level lama.
+
+        Menjalankan fitur ini di live berarti cancel + pasang trigger
+        baru, jadi dua order tambahan setiap kali ambang terlampaui --
+        dan ambang itu dicek tiap 0,3 detik selama posisi terbuka,
+        sehingga tanpa sifat idempoten itu menjadi hujan order.
+
+        Sampai implementasi cancel+replace yang idempoten ada, jalur
+        live tidak boleh memanggilnya sama sekali. Di paper fitur tetap
+        jalan: tidak ada dana nyata dan tidak ada order di bursa.
         """
         repo = await self._get_repo()
-        open_positions = await repo.get_open_positions()
+
+        # Filter per mode, bukan per posisi. `mode` ada di baris posisi,
+        # jadi posisi live dan paper bisa dibedakan tanpa status tambahan --
+        # dan tanpa perlu tahu engine sedang di mode apa.
+        live_rows = [p for p in await repo.get_open_positions(mode="live")]
+        if live_rows:
+            logger.warning(
+                "Breakeven DINONAKTIFKAN untuk %d posisi live: SL "
+                "hanya bisa digeser di bursa lewat cancel+replace, yang "
+                "belum diimplementasikan. Angka SL di DB TIDAK bergerak "
+                "untuk posisi ini -- yang tertulis di dashboard bukan "
+                "yang melindungi posisi di bursa.",
+                len(live_rows),
+            )
+        paper_rows = [p for p in await repo.get_open_positions(mode="paper")]
+        if not paper_rows:
+            return
 
         trigger = self.scalp.breakeven_trigger_pct
         offset = self.scalp.breakeven_offset_pct
 
-        for pos in open_positions:
+        for pos in paper_rows:
             symbol = pos["symbol"]
             price = market_store.get_price(symbol)
             if not price:
