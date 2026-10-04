@@ -304,6 +304,77 @@ class TestDailyCounters(unittest.TestCase):
         self.assertNotIn(Blocker.DAILY_ORDER_LIMIT, blockers)
         self.assertNotIn(Blocker.DAILY_LOSS_LIMIT, blockers)
 
+    def test_daily_loss_exactly_at_limit_blocks(self):
+        """
+        TEPAT di limit harus memblokir.
+
+        Test lama hanya mencoba `max - 1` dan `max + 1`, jadi BUKAN
+        batasnya yang diuji tapi "di dekat" batasnya. Mengubah
+        `<=` menjadi `<` di `master_blockers` membuat test lama tetap
+        hijau sementara limit melebar satu sen — dan itu yang ditemukan
+        mutation testing (`master_blockers__mutmut_57`).
+
+        Breaker harus menyala tepat saat kerugian menyentuh batas. Melewat
+        satu titik berarti satu order lagi terkirim setelah batas tercapai.
+        """
+        self.gate.counters.realized_pnl = -abs(self.cfg.max_daily_loss)
+        self.assertIn(
+            Blocker.DAILY_LOSS_LIMIT, self.gate.master_blockers(_midday()),
+            "tepat di batas, daily-loss breaker harus menyala",
+        )
+
+    def test_daily_loss_one_cent_above_limit_blocks(self):
+        """Sedikit di atas batas juga memblokir — arahnya benar."""
+        self.gate.counters.realized_pnl = -abs(self.cfg.max_daily_loss) - 0.01
+        self.assertIn(
+            Blocker.DAILY_LOSS_LIMIT, self.gate.master_blockers(_midday()),
+        )
+
+    def test_daily_loss_one_cent_below_limit_allows(self):
+        """Satu sen di bawah batas harus LOLOS."""
+        self.gate.counters.realized_pnl = -abs(self.cfg.max_daily_loss) + 0.01
+        self.assertNotIn(
+            Blocker.DAILY_LOSS_LIMIT, self.gate.master_blockers(_midday()),
+            "satu sen di bawah batas tidak boleh memblokir",
+        )
+
+    def test_consecutive_errors_exactly_at_limit_blocks(self):
+        """
+        TEPAT `max_consecutive_errors` harus memblokir.
+
+        `master_blockers` memakai `>=`. Mengubahnya jadi `>` membuat
+        error streak ke-3 lolos — dan order ketiga yang gagal tidak lagi
+        menghentikan trading. Itu mutan
+        `master_blockers__mutmut_61`, dan test lama tidak pernah menyetel
+        counter ke angka persis batasnya.
+        """
+        self.gate.counters.consecutive_errors = self.cfg.max_consecutive_errors
+        self.assertIn(
+            Blocker.TOO_MANY_ERRORS, self.gate.master_blockers(_midday()),
+            "tepat di batas error, gerbang harus menutup",
+        )
+
+    def test_consecutive_errors_one_below_limit_allows(self):
+        """Satu error di bawah batas masih boleh order."""
+        self.gate.counters.consecutive_errors = self.cfg.max_consecutive_errors - 1
+        self.assertNotIn(
+            Blocker.TOO_MANY_ERRORS, self.gate.master_blockers(_midday()),
+        )
+
+    def test_consecutive_errors_one_above_limit_blocks(self):
+        """Di atas batas juga memblokir."""
+        self.gate.counters.consecutive_errors = self.cfg.max_consecutive_errors + 1
+        self.assertIn(
+            Blocker.TOO_MANY_ERRORS, self.gate.master_blockers(_midday()),
+        )
+
+    def test_daily_order_count_exactly_at_limit_blocks(self):
+        """Pola yang sama untuk batas jumlah order harian."""
+        self.gate.counters.orders_sent = self.cfg.max_daily_orders
+        self.assertIn(
+            Blocker.DAILY_ORDER_LIMIT, self.gate.master_blockers(_midday()),
+        )
+
     def test_rollover_resets_counters_but_keeps_error_streak(self):
         """
         Angka harian direset tengah malam, tapi error beruntun TIDAK.

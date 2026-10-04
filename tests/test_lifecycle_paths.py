@@ -798,6 +798,42 @@ class TestRiskGatePaths(unittest.TestCase):
         )
         self.assertTrue(any("Kerugian harian" in x for x in r["reasons"]))
 
+    def test_daily_loss_exactly_at_limit_trips_breaker(self):
+        """
+        TEPAT di batas harus memicu breaker.
+
+        Test di atas memakai 0.9x dan 1.2x dari batas — jadi keduanya
+        menguji "jauh dari batas", bukan batasnya. Mengubah
+        `loss_fraction >= max_daily_loss` menjadi `>` di
+        `validate_trade` (mutan `validate_trade__mutmut_22`) membuat
+        kedua test itu tetap hijau sementara breaker melebar satu titik.
+
+        Angka batas diambil dari `rm.config.max_daily_loss`, bukan ditulis
+        di sini — test yang mengarang angkanya akan hijau saat config
+        berubah, dan itu kelemahan yang paling mahal untuk pengaman uang.
+        """
+        rm = RiskManager()
+        initial = 10000.0
+        rm._initial_balance = initial
+        limit = rm.config.max_daily_loss
+
+        exactly = initial * limit
+        r = rm.validate_trade(200.0, 10.0, 0, daily_pnl=-exactly)
+        self.assertFalse(
+            r["allowed"],
+            "tepat di {:0.0%} dari modal awal, breaker harus tripped".format(limit),
+        )
+        self.assertTrue(any("Kerugian harian" in x for x in r["reasons"]))
+
+        # Dan satu sen di bawahnya harus LOLOS, supaya test ini tidak
+        # lulus karena batasnya melebar ke arah lain.
+        just_under = exactly - initial * 0.0001
+        r = rm.validate_trade(200.0, 10.0, 0, daily_pnl=-just_under)
+        self.assertTrue(
+            r["allowed"],
+            "satu sen di bawah batas tidak boleh tripped",
+        )
+
     def test_profit_daily_pnl_never_trips_breaker(self):
         r = self.rm.validate_trade(10000.0, 10.0, 0, daily_pnl=5000.0)
         self.assertTrue(r["allowed"], "PnL positif tidak boleh memicu breaker")
