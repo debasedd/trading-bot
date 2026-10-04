@@ -21,14 +21,38 @@ from core.market_store import market_store
 
 
 def _reset_store():
-    """Bersihkan state market_store antar test."""
-    market_store._order_books.clear()
-    market_store._last_prices.clear()
-    market_store._price_ts.clear()
-    market_store._price_history.clear()
-    market_store._recent_trades.clear()
-    market_store._funding.clear()
-    market_store._open_interest.clear()
+    """
+    Bersihkan state market_store antar test.
+
+    Dipakai DUA kali: sekali di setUp supaya test tidak mewarisi state, dan
+    sekali lagi sebagai `addCleanup` supaya test ini tidak MEWARISKAN state
+    ke test berikutnya. Membersihkan hanya di setUp tidak mencegah apa pun —
+    `market_store` adalah SINGKTON modul tanpa API reset, jadi apa yang ditulis
+    test ini masih ada saat test berikutnya dari file LAIN mulai, dan urutan
+    test tidak dijamin.
+
+    Key yang ditulis tapi TIDAK dihapus di sini pernah menggagalkan test
+    akuntansi di file lain. Terukur: test ini menyisakan
+    `set_funding("BTC/USDT:USDT", 0.0002)`, lalu `funding_cost()` di
+    `test_lifecycle_paths` menghitungnya dan gagal dengan selisih 1.9998
+    (= 9998.88 x 0.0002 x 1 periode). Delta debugging atas urutan acak
+    seed 1 menunjuk `test_positive_funding_is_contrarian_short` sebagai
+    penyebab tunggal keempat kegagalan itu.
+
+    `_live_candles` dan `_tickers` ikut dibersihkan karena keduanya dict
+    yang bisa dibaca jalur live, dan `_live_candles` punya filter
+    `close truthy` yang bikin isinya bertahan diam-diam.
+    """
+    store = market_store.__dict__
+    store["_order_books"].clear()
+    store["_last_prices"].clear()
+    store["_price_ts"].clear()
+    store["_price_history"].clear()
+    store["_recent_trades"].clear()
+    store["_funding"].clear()
+    store["_open_interest"].clear()
+    store["_live_candles"].clear()
+    store["_tickers"].clear()
 
 
 class TestAbstention(unittest.TestCase):
@@ -36,6 +60,9 @@ class TestAbstention(unittest.TestCase):
 
     def setUp(self):
         _reset_store()
+        # Restore di akhir, bukan hanya di awal: tanpa ini test ini
+        # MEWARISKAN state-nya ke test berikutnya di file lain.
+        self.addCleanup(_reset_store)
         self.bus = EventBus()
 
     def test_orderflow_abstains_without_book(self):
@@ -75,6 +102,9 @@ class TestAbstention(unittest.TestCase):
 class TestOrderFlowAgent(unittest.TestCase):
     def setUp(self):
         _reset_store()
+        # Restore di akhir, bukan hanya di awal: tanpa ini test ini
+        # MEWARISKAN state-nya ke test berikutnya di file lain.
+        self.addCleanup(_reset_store)
         self.agent = OrderFlowAgent(EventBus())
 
     def test_bid_heavy_book_points_long(self):
@@ -109,6 +139,9 @@ class TestOrderFlowAgent(unittest.TestCase):
 class TestMomentumAgent(unittest.TestCase):
     def setUp(self):
         _reset_store()
+        # Restore di akhir, bukan hanya di awal: tanpa ini test ini
+        # MEWARISKAN state-nya ke test berikutnya di file lain.
+        self.addCleanup(_reset_store)
         self.agent = MomentumAgent(EventBus())
 
     def test_rising_price_points_long(self):
@@ -137,6 +170,9 @@ class TestMomentumAgent(unittest.TestCase):
 class TestMicrostructureAgent(unittest.TestCase):
     def setUp(self):
         _reset_store()
+        # Restore di akhir, bukan hanya di awal: tanpa ini test ini
+        # MEWARISKAN state-nya ke test berikutnya di file lain.
+        self.addCleanup(_reset_store)
         self.agent = MicrostructureAgent(EventBus())
 
     def _tape(self, sides):
@@ -212,6 +248,13 @@ class TestMicrostructureAgent(unittest.TestCase):
 
 
 class TestEnsembleCoordinator(unittest.TestCase):
+    def setUp(self):
+        _reset_store()
+        # Kelas ini sebelumnya hanya memanggil `_reset_store()` di dalam
+        # body test, tanpa restore di akhir -- jadi apa pun yang ditulis
+        # ensemble di sini tertinggal untuk file lain.
+        self.addCleanup(_reset_store)
+
     def test_only_enabled_agents_are_built(self):
         _reset_store()
         import asyncio
@@ -236,22 +279,26 @@ class TestEnsembleCoordinator(unittest.TestCase):
         Agen yang dimatikan di config tidak boleh ikut dibangun.
 
         Config adalah singleton, jadi perubahan di sini HARUS dikembalikan
-        atau akan bocor ke test lain.
+        ke nilai SEBELUM test, bukan ke `True`. Memulihkan ke literal
+        `True` terdengar benar tapi tidak: kalau config produksi punya
+        agen ini mati, test diam-diam menyalakannya untuk semua test
+        setelahnya.
         """
         _reset_store()
         import asyncio
 
-        async def _build():
-            from core.config import get_config
-            cfg = get_config()
-            agent = DirectionEnsembleAgent(
-                EventBus(), ["BTC/USDT:USDT"], cfg.database_path
-            )
-            agent.ensemble.microstructure.enabled = False
-            await agent.initialize()
-            return agent
-
+        from core.config import get_config
+        original = get_config().ensemble.microstructure.enabled
         try:
+            async def _build():
+                cfg = get_config()
+                agent = DirectionEnsembleAgent(
+                    EventBus(), ["BTC/USDT:USDT"], cfg.database_path
+                )
+                agent.ensemble.microstructure.enabled = False
+                await agent.initialize()
+                return agent
+
             agent = asyncio.run(_build())
             names = {s.agent_name for s in agent.specialists}
             self.assertNotIn("microstructure", names)
@@ -259,8 +306,11 @@ class TestEnsembleCoordinator(unittest.TestCase):
                 names, {"orderflow", "momentum", "technical"}
             )
         finally:
-            from core.config import get_config
-            get_config().ensemble.microstructure.enabled = True
+            get_config().ensemble.microstructure.enabled = original
+            self.assertIs(
+                get_config().ensemble.microstructure.enabled, original,
+                "config singleton tidak kembali ke nilai sebelum test",
+            )
 
 
 if __name__ == "__main__":

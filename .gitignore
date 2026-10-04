@@ -129,3 +129,16 @@ uncov.txt
 # menumpuk di version control tanpa pernah dibaca. Lihat docs/ARCHITECTURE.md
 # 16.7.
 data_store/test_live_gate_*.json
+
+# Gate pencemar state global. Skrip gerbang yang menjalankan suite penuh
+# pada beberapa seed acak dan tiap file test sendiri-sendiri. Alat bantu
+# pengukuran, bukan bagian produk — dipanggil manual saat ingin cek
+# pencemar, bukan dari pipeline mana pun.
+_seed_sweep.py
+_per_file_gate.py
+
+# Probe sintetis yang test_pollution_guard_detects.py tulis untuk
+# membuktikan guard-nya benar-benar menangkap. Kalau test selesai
+# normal file ini terhapus sendiri; ia hanya tinggal kalau proses
+# killed di tengah jalan.
+tests/_probe_tmp/

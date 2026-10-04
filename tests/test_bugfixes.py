@@ -78,12 +78,27 @@ class TestTickQualityGuard(unittest.IsolatedAsyncioTestCase):
         self.store._price_history.clear()
         self.store._last_prices.clear()
         self.store._price_ts.clear()
+        self.store._order_books.clear()
+        self.store._funding.clear()
+        self.store._open_interest.clear()
+        self.store._recent_trades.clear()
+        self.store._tickers.clear()
+        self.store._live_candles.clear()
 
     async def asyncTearDown(self):
         from database.db import close_db
+        # Kosongkan SEMUA dict store, bukan hanya tiga yang dipakai test ini.
+        # `funding` dan `_recent_trades` dibaca `close_position`/`fill_cost`,
+        # jadi sisa dari test ini akan mengubah angka akuntansi di file lain.
         self.store._price_history.clear()
         self.store._last_prices.clear()
         self.store._price_ts.clear()
+        self.store._order_books.clear()
+        self.store._funding.clear()
+        self.store._open_interest.clear()
+        self.store._recent_trades.clear()
+        self.store._tickers.clear()
+        self.store._live_candles.clear()
         await close_db()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix

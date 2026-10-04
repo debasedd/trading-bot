@@ -52,6 +52,22 @@ class TestAtrCalculation(unittest.TestCase):
     def setUp(self):
         from analysis import volatility
         self.vol = volatility
+        self._clear_vol_state()
+
+    def tearDown(self):
+        self._clear_vol_state()
+
+    @staticmethod
+    def _clear_vol_state():
+        """
+        `_ATR_CACHE` dan `_CANDLE_SOURCE` di `analysis/volatility.py` adalah
+        dict modul, jadi cache yang diisi test ini bertahan untuk test lain --
+        dan kunci cache tidak menyertakan `period`, jadi test dengan `period`
+        berbeda dalam jendela 5 detik yang sama bisa bertabrakan diam-diam.
+        """
+        from analysis import volatility
+        volatility.clear_volatility_cache()
+        volatility.clear_candle_source()
 
     def test_atr_from_uniform_candles(self):
         """
@@ -265,6 +281,16 @@ class TestVolatilityGate(unittest.TestCase):
         from analysis import volatility
         self.vol = volatility
         self.cfg = _build_config()
+        self._clear_vol_state()
+
+    @staticmethod
+    def _clear_vol_state():
+        from analysis import volatility
+        volatility.clear_volatility_cache()
+        volatility.clear_candle_source()
+
+    def tearDown(self):
+        self._clear_vol_state()
 
     def test_healthy_target_passes(self):
         """Target normal harus lolos tanpa alasan penolakan."""
