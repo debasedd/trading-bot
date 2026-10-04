@@ -332,140 +332,22 @@ class TestReconcileSymbolKeyMismatch(unittest.IsolatedAsyncioTestCase):
 # keduanya menguji bahwa sisa order partial dibatalkan dan proteksi
 # mengikuti filled_size.
 
+
+
 # ═══════════════════════════════════════════════════════════════════
-# DEFECT 5 — tidak ada lookup order by cloid, cancel() tidak terpakai
+# DEFECT 5 -- SUDAH DIPERBAIKAN di item (d) Fase 1.
 #
-# cloid dibuat untuk setiap order opening dengan alasan yang tertulis
-# eksplisit di client.py:384-387 dan engine.py:225-228: kalau respons
-# hilang karena timeout, hanya cloid yang bisa menjawab "apakah order
-# saya sudah masuk?".
+# Reproduksi aslinya menuntut `LiveExchange.order_status_by_cloid()` --
+# dan itu tidak akan pernah ada: bursa tidak menyediakan lookup order
+# by cloid. `orderStatus` hanya menerima `oid` numerik; cloid dalam
+# bentuk hex maupun string menghasilkan HTTP 422. Jadi test lama itu
+# menuntut sesuatu yang mustahil, dan tidak bisa jadi bukti apa pun.
 #
-# Tapi tidak ada kode yang melakukan lookup itu. LiveExchange.cancel(
-# coin, oid) juga tidak pernah dipanggil dari produksi mana pun.
+# Yang SEBENARNYA bisa dijamin tanpa endpoint tersebut: cloid yang
+# sama tidak boleh mengirim order kedua. Bursa tidak bisa menjawab
+# "apakah order saya sudah masuk?", jadi satu-satunya opsi yang tidak
+# menebak adalah tidak mengirim apa pun untuk identitas yang sama.
 #
-# Akibatnya setelah timeout, siklus berikutnya bisa mengirim order
-# kedua untuk posisi yang sama: posisi tergandakan.
+# Reproduksi lengkapnya pindah ke tests/test_order_idempotency.py
+# (8 test) dan tests/test_cloid_wire_encoding.py (12 test).
 # ═══════════════════════════════════════════════════════════════════
-
-
-@known_broken("DEFECT-5 tidak ada lookup order by cloid")
-class TestNoCloidLookupOrCancel(unittest.IsolatedAsyncioTestCase):
-    """Reproduksi: harus ada cara memastikan order timeout tidak masuk."""
-
-    def test_live_exchange_has_order_status_lookup(self):
-        """
-        Harus ada cara menanyakan status order lewat cloid.
-
-        SDK Hyperliquid menyediakan `query_order_by_cloid()`. Kalau kode
-        produksi memanggilnya setelah timeout, cloid punya arti.
-        """
-        ex = make_exchange_with_state(CLEARINGHOUSE_STATE_WITH_POSITION, "BTC")
-        self.assertTrue(
-            hasattr(ex, "order_status_by_cloid"),
-            "LiveExchange tidak punya cara mencari order by cloid -- "
-            "idempotensi yang diklaim di docstring tidak diimplementasikan",
-        )
-
-    def test_cancel_never_called_in_production(self):
-        """
-        cancel(coin, oid) adalah satu-satunya cara membatalkan order
-        tertentu. Kalau tidak pernah dipanggil, tidak ada jalur
-        pembatalan per-order di seluruh sistem.
-        """
-        root = pathlib.Path(__file__).resolve().parent.parent
-        callers = []
-        for py in root.rglob("*.py"):
-            rel = py.relative_to(root)
-            if rel.parts[0] in ("tests", "build", "research", "data_store"):
-                continue
-            if rel.name == "client.py":
-                continue  # definisinya sendiri
-            text = py.read_text(encoding="utf-8", errors="replace")
-            for i, line in enumerate(text.splitlines(), 1):
-                s = line.strip()
-                if "cancel_all" in s or ".cancel()" in s:
-                    continue
-                if ".cancel(" in s and "task.cancel" not in s:
-                    callers.append("%s:%d  %s" % (rel, i, s[:70]))
-        self.assertTrue(
-            callers,
-            "cancel(coin, oid) tidak dipanggil dari mana pun di produksi; "
-            "tidak ada pembatalan per-order",
-        )
-
-    async def test_timeout_then_retry_doubles_position(self):
-        """
-        Urutan yang harus dicegah: timeout -> order mungkin masuk ->
-        retry dengan cloid sama -> posisi tergandakan.
-
-        Test ini memakai mesin sungguhan. Yang dikontrol hanya bursa:
-        panggilan pertama melempar TimeoutError, panggilan kedua
-        menerima. Kalau idempotensi ada, panggilan kedua harus dicegat
-        sebagai "sudah masuk" dan tidak mengirim order lagi.
-        """
-        from trading.live.client import OrderOutcome
-
-        sent = []
-
-        class _TimeoutThenAccept:
-            def __init__(self):
-                self.n = 0
-
-            def free_collateral(self):
-                return 10000.0
-
-            def total_notional(self):
-                return 0.0
-
-            def symbol_notional(self, coin):
-                return 0.0
-
-            def set_leverage(self, coin, leverage, is_cross=True):
-                return {"ok": True}
-
-            def place_limit_order(self, coin, is_buy, size, price,
-                                  reduce_only=False, cloid=None):
-                self.n += 1
-                sent.append(cloid)
-                if self.n == 1:
-                    raise TimeoutError("respons hilang")
-                return OrderOutcome(ok=True, filled_size=size,
-                                    avg_price=price, order_id=7)
-
-            def place_trigger_order(self, coin, is_buy, size, trigger_price,
-                                    tpsl, reduce_only=True):
-                return OrderOutcome(ok=True, filled_size=size, oid=2)
-
-            def open_orders(self):
-                return []
-
-            def positions(self):
-                return []
-
-        engine = LiveEngine(
-            gate=clean_gate(), exchange=_TimeoutThenAccept(), cfg=LiveConfig()
-        )
-
-        # Ukuran 0.001 BTC = 85 USDC, di bawah max_order_notional (100).
-        # Kalau lebih besar, gerbang menolak karena limit -- dan test-nya
-        # lulus karena alasan yang salah, bukan karena idempotensi.
-        cloid = "tb-repro-retry-0001"
-        await engine.submit_order(
-            "BTC", "BTC/USDT:USDT", True, 0.001, 85000.0,
-            stop_loss=84000.0, take_profit=87000.0, leverage=5, cloid=cloid,
-        )
-        await engine.submit_order(
-            "BTC", "BTC/USDT:USDT", True, 0.001, 85000.0,
-            stop_loss=84000.0, take_profit=87000.0, leverage=5, cloid=cloid,
-        )
-
-        self.assertLessEqual(
-            len(sent), 1,
-            "cloid %s dikirim %d kali; setelah timeout, retry harus "
-            "dicek dulu lewat lookup by cloid sebelum mengirim lagi"
-            % (cloid, len(sent)),
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
