@@ -3,7 +3,7 @@
 **Satu-satunya sumber status program.** Baca sebelum bekerja. Perbarui di
 akhir setiap sesi dan sebelum laporan fase.
 
-Terakhir: 2026-10-04 · Branch `fase-1` · HEAD `2054ed4`
+Terakhir: 2026-10-04 · Branch `fase-1` · HEAD `838587c` (lihat catatan di bawah)
 
 ---
 
@@ -20,6 +20,11 @@ unittest: Ran 704 tests — OK
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
 cabutan. Dua gerbang yang tersisa — chaos test dan smoke test testnet — butuh
 testnet key dari operator.
+
+**CATATAN TENTANG HASH DI HEADER:** header menulis hash commit yang memuat
+file ini, jadi setiap kali hash diperbarui, commit barunya punya hash lain
+lagi. Ini tidak bisa converging. Header itu berarti "perubahan terakhir ada
+di commit ini", bukan "ini adalah HEAD". Untuk hash terbaru, pakai `git log`.
 
 **PERINGATAN: suite pytest FLAKY.** Angka di atas adalah hasil run yang
 bersih, bukan jaminan. Enam run berturut-turut menghasilkan 700 passed, lalu
