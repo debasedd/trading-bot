@@ -130,7 +130,7 @@ menangkap pembocor berikutnya tanpa perlu dianalisis manual.
 
 ### Akar masalah
 
-Delta debugging (`ddmin` atas urutan seed 1)Cit down ke SATU test:
+Delta debugging (`ddmin` atas urutan seed 1) turun ke SATU test:
 
 ```
 tests/test_direction_agents.py::TestMicrostructureAgent::
@@ -231,29 +231,83 @@ diinvestigasi.
    diinvestigasi ulang. `_seed_sweep.py` sekarang menyimpan log penuh ke
    `%TEMP%/seed_sweep_logs/` supaya kasus berikutnya bisa ditelusuri.
 
+## Mutation testing — environment siap, hasil belum
+
+`mutmut` **tidak jalan native Windows**: 3.8.0 keluar dengan pesan eksplisit
+`"To run mutmut on Windows, please use the WSL"` (issue #397). Setup yang
+dipakai sesuai pilihan operator — alat standar, bukan runner buatan:
+
+```
+~/trading-bot-new   clone ke filesystem WSL (bukan /mnt/c)
+~/tbenv            venv, Python 3.14.4
+
+pip install pytest mutmut hyperliquid-python-sdk aiosqlite pyyaml
+            python-dotenv numpy pandas pytz
+```
+
+Tidak dipasang: torch, transformers, dash, plotly, pandas_ta. Install
+`numba` (yang `pandas_ta` minta) gagal build di Python 3.14, dan tidak ada
+target mutasi yang memerlukannya.
+
+**Baseline di environment itu: 230 test hijau, 0 gagal.** Tanpa baseline
+bersih, "mutan selamat" tidak berarti apa pun — mutan bisa terlihat selamat
+karena test-nya memang sudah merah.
+
+Per file: `test_live_safety` 45, dan 185 untuk gabungan
+`test_live_executor` / `test_live_engine` / `test_risk_manager` /
+`test_fill_cost_funding` / `test_partial_fill` / `test_fill_ledger` /
+`test_fill_reconciliation` / `test_order_idempotency` / `test_bugfixes` /
+`test_lifecycle_paths`.
+
+Konfigurasi ada di `setup.cfg` (commit `c1c1034`). Tiga hal di sana yang
+tidak intuitif dan sudah terbukti menyesatkan:
+
+1. **`also_copy` wajib, isinya 90 entri.** mutmut hanya menyalin file yang
+   dimutasi, jadi test di `mutants/` gagal `No module named core` di
+   collection — sebelum satu baris pun diuji.
+2. **`config.yaml` harus ikut.** Tanpa itu tarif fee jatuh ke default
+   dataclass (taker `0.0005`, bukan `0.00045`) dan baseline jadi merah di
+   mutan pertama. Gejalanya terlihat seperti "mutan belum terdeteksi",
+   padahal hanya konfigurasi yang hilang.
+3. **Format argumen.** `configparser` menolak key berulang dan mutmut
+   memecah nilai multi-line per baris. `-p no:cacheprovider` di satu baris
+   jadi satu argumen yang tidak bisa dibaca pytest. Yang benar: blok
+   multi-line dengan `-pno:cacheprovider` (tanpa spasi).
+
+Scope test: `test_api_wallet_separation.py` dikeluarkan dari selection.
+Root cause kegagalannya sudah ditemukan dan diperbaiki, dan file itu tidak
+menyentuh satu pun baris yang dimutasi. Empat file lain butuh
+`pandas_ta` / `plotly` / `apscheduler` yang tidak dipasang.
+
+**Status hasil: belum ada.** Yang harus dilaporkan setelah run selesai:
+jumlah mutan per modul, mutan selamat per modul, dan klasifikasi tiap
+mutan selamat sebagai *equivalent* atau *celah test*. Semua mutan selamat
+di `safety.py` dan breaker ditutup dengan test baru atau penjelasan
+tertulis.
+
 ## Berikutnya
 
-Pencemar urutan acak sudah beres. Urutan berikutnya mengikuti urutan yang
-operator tetapkan di 2026-10-04.
+Pencemar urutan acak dan isolate test sudah beres. Urutan berikutnya
+mengikuti urutan operator 2026-10-04.
 
-1. **Mutation testing otomatis (butir 11)** — `mutmut` untuk `safety.py`,
-   `executor.py`, akuntansi fill, dan breaker. Sudah tidak tertahan lagi:
-   suite-nya sekarang bisa dipercaya, jadi mutan yang "selamat" memang
-   berarti tidak terdeteksi. Mutan yang selamat di jalur safety ditutup
-   dengan test baru.
+1. **Mutation testing (butir 11)** — environment siap, hasil run belum
+   keluar. Lihat § Mutation testing.
 2. **Test batas (butir 12)** — tepat di limit, sedikit di bawah/atas,
    pergantian hari UTC, state setelah restart. Untuk breaker, kill switch,
    dan partial fill.
 3. **Jam palsu di beberapa zona waktu (butir 5)** — jalankan suite dengan
-   jam dibekukan di beberapa jam UTC dan zona waktu.
+   jam dibekuka di beberapa jam UTC dan zona waktu.
 4. **(h) kill switch** sesuai lingkup operator butir 10.
 5. **(g) sisa:** parameter `mode` di `get_daily_realized_pnl` dan semua
    pemanggil `get_open_positions`. Catatan: `close_position` ternyata
    **sudah** atomik (`WHERE id = ? AND status = 'OPEN'` plus `commit()` dan
    `rowcount`), jadi yang belum ada hanya pengembalian nilai.
-6. **(i) shutdown**, **(f) funding** — cek dokumentasi resmi lebih dulu,
-   **(j) arming CLI**.
-7. Perbarui `docs/reports/fase-1-partial.md` setelah tiap item.
+6. **Config di jalur risiko** — `position_manager.py:57` dan
+   `paper_engine.py:93` masih baca `get_config()`. Lihat § Sisa pekerjaan.
+7. **(i) shutdown**, **(f) funding** — cek dokumentasi resmi lebih dulu
+   (syarat item (f) sudah ditulis), **(j) arming CLI**.
+8. Perbarui `docs/reports/fase-1-partial.md` setelah tiap item.
+
 
 ### Sisa pekerjaan config di jalur risiko
 
@@ -263,6 +317,35 @@ test sendiri:
 
 - `trading/position_manager.py:57` — `self.config = get_config()`
 - `trading/paper_engine.py:93` — `self.config = get_config()`
+
+UTANG INI DIJALUR AMAN. `position_manager` menghitung fee dan funding yang
+masuk ke `realized_pnl`, dan `realized_pnl` itu sumber angka daily-loss
+breaker. Kalau config global berubah, angka breaker berubah tanpa ada yang
+mengubah kode — kelas bug yang paling mahal di sistem ini.
+
+### Syarat item (f) — funding live
+
+Funding **tidak boleh** diambil dari `market_store`. `market_store._funding`
+adalah data WebSocket *live*, dan `close_position` membacanya lewat
+`market_store.get_funding(symbol)` (`position_manager.py:253`).
+
+Untuk mode live, angka yang benar harus datang dari **data bursa** —
+`userFills` untuk fill, dan sumber funding yang disepakati operator untuk
+settlement. Alasannya:
+
+1. `market_store` bisa kosong. Kalau WS belum connect, `get_funding()`
+   mengembalikan `None`, dan `funding_cost()` memakai default. Posisi
+   ditutup dengan angka funding yang bukan milik bursa.
+2. `market_store` tidak distinguish testnet dan mainnet. Rate yang sama
+   dipakai untuk dua akun berbeda.
+3. Rate yang berubah setelah posisi dibuka tidak akan pernah tercatat —
+   biaya settlement dihitung dari rate saat penutupan, bukan rate saat
+   periode settlement sebenarnya.
+
+Sebelum (f) dikerjakan, endpoint dan skemanya perlu dikonfirmasi operator
+(lihat § Pertanyaan yang menunggu operator). Jangan 구현 dulu lalu
+meminta konfirmasi — ledger yang salah lebih mahal daripada item yang
+belum dikerjakan.
 
 ## Pertanyaan yang menunggu operator
 
