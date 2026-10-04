@@ -228,6 +228,22 @@ def _test_id(item):
 # Fixture
 # ---------------------------------------------------------------------------
 
+def pytest_ignore_collect(collection_path, config):
+    """
+    Jangan kumpulkan file di `tests/_probe_tmp/`.
+
+    `test_pollution_guard_detects.py` menulis probe sintetis ke sana untuk
+    membuktikan guard benar-benar menangkap pencemar. Kalau test itu selesai
+    normal, filenya terhapus sendiri — tapi kalau proses mati di tengah
+    jalan, sisa file ikut ter-collection dan ikut jadi "test" yang gagal
+    dengan pesan guard. Itu persis kebisingan yang harus dihindari.
+    """
+    parts = str(collection_path).replace("\\", "/").split("/")
+    if "_probe_tmp" in parts:
+        return True
+    return None
+
+
 def pytest_sessionstart(session):
     """
     Muat config SEBELUM test pertama, bukan saat test pertama memintanya.

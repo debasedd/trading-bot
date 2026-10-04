@@ -74,31 +74,28 @@ class TestTickQualityGuard(unittest.IsolatedAsyncioTestCase):
         # hidup di instans. Karena itu import harus dari submodule langsung.
         self.store = market_store
         self.symbol = "BTC/USDT:USDT"
-        # Kosongkan sisa state dari test lain agar guard mulai bersih.
+        # Hanya kosongkan dict yang DIPAKAI tick guard ini. Dict lain
+        # (`_funding`, `_recent_trades`, `_order_books`) sengaja tidak
+        # disentuh: membocosorkannya di sini menghapus state milik test
+        # lain yang kebetulan jalan sebelum, dan itu pencemar dengan
+        # arah terbalik — test yang tidak salah jadi ikut gagal.
+        #
+        # Kalau test ini butuh salah satu dict itu kosong, kosongkan di
+        # dalam test dan pulihkan di akhir, bukan di setUp bersama.
         self.store._price_history.clear()
         self.store._last_prices.clear()
         self.store._price_ts.clear()
-        self.store._order_books.clear()
-        self.store._funding.clear()
-        self.store._open_interest.clear()
-        self.store._recent_trades.clear()
-        self.store._tickers.clear()
-        self.store._live_candles.clear()
 
     async def asyncTearDown(self):
         from database.db import close_db
-        # Kosongkan SEMUA dict store, bukan hanya tiga yang dipakai test ini.
-        # `funding` dan `_recent_trades` dibaca `close_position`/`fill_cost`,
-        # jadi sisa dari test ini akan mengubah angka akuntansi di file lain.
+        # Hanya tiga dict yang dipakai test ini. Teorinya "kosongkan
+        # semuanya" terdengar lebih aman, tapi `clear()` menghapus milik
+        # test lain juga — dan guard menangkap itu sebagai
+        # `market_store._funding: DIHAPUS`. Membersihkan dict yang tidak
+        # milikmu bukan perbaikan, itu pencemaran.
         self.store._price_history.clear()
         self.store._last_prices.clear()
         self.store._price_ts.clear()
-        self.store._order_books.clear()
-        self.store._funding.clear()
-        self.store._open_interest.clear()
-        self.store._recent_trades.clear()
-        self.store._tickers.clear()
-        self.store._live_candles.clear()
         await close_db()
         for suffix in ("", "-wal", "-shm"):
             p = self.test_db_path + suffix
