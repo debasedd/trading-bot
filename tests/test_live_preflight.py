@@ -27,16 +27,17 @@ Keduanya harus GAGAL DI START, bukan saat order pertama.
 
 YANG DIUJI
 
-  1. `preflight()` menolak bursa tidak terjangkau, dengan alasan yang
-     menyebutendpoint, bukan `NetworkAccessDenied` dari socket guard.
-  2. `preflight()` menolak key yang tidak bisa dipakai signing.
-  3. `preflight()` menolak `account_address` yang bukan alamat hex.
-  4. `preflight()` menolak wallet penanda tangan yang TIDAK sama dengan
-     `account_address` kalau operator tidak menyatakan niat itu —
-     default-nya harus gagal, bukan diam.
-  5. `preflight()` HANYA чита. Tidak mengirim order.
-  6. `run.py` memanggilnya sebelum menjalankan loop, dan GAGAL berarti
-     loop tidak jalan.
+  1. Bursa tidak terjangkau -> `exchange_unreachable`.
+  2. `universe` kosong -> `universe_empty`.
+  3. Alamat salah bentuk -> `bad_address`.
+  4. Signer beda dengan query address -> `signer_mismatch`.
+  5. Preflight HANYA membaca: tidak pernah mengirim order.
+  6. Log tidak pernah memuat alamat penuh.
+  7. `allow_api_wallet=True` tidak mematikan validasi bentuk.
+
+Test perilaku boot ada di `tests/test_live_startup_gate.py`, bukan di
+sini: file ini menguji `preflight()` sebagai unit, file itu menguji bahwa
+`_build_live_executor()` benar-benar menjalankannya dan benar-benar berhenti.
 
 DEFECT YANG DIPERBAIKI DI SINI (satu commit)
 --------------------------------------------
