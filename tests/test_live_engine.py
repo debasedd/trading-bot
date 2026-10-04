@@ -45,13 +45,17 @@ class FakeExchange:
     default bursa, dan tidak ada error yang mengatakannya.
     """
 
-    def __init__(self, fill=True, positions=None, mids=None):
+    def __init__(self, fill=True, positions=None, mids=None,
+                 account_value=1000.0):
         self.calls = []
         self._fill = fill
         self._positions = positions or []
         # `mids` yang kosong harus BERBEDA dari mids=None, supaya test bisa
         # memverifikasi jalur "harga pasar tidak terbaca".
         self._mids = {"BTC": 100.0} if mids is None else mids
+        # `account_value=0` ESSENSIAL untuk reproducing akun kosong. Lihat
+        # docstring `get_account_state`.
+        self._account_value = account_value
 
     def _log(self, name, **kw):
         self.calls.append((name, kw))
@@ -93,6 +97,34 @@ class FakeExchange:
 
     def positions(self):
         return self._positions
+
+    def get_account_state(self):
+        """
+        Bentuk respons `clearinghouseState` yang memang ada di bursa.
+
+        WAJIB menyertakan `marginSummary.accountValue` yang bukan nol:
+        `_fetch_remote_positions()` memanggil `_require_real_account()`,
+        yang menolak `accountValue == 0` sebagai "akun kosong".
+
+        Itu bukan formalitas. Bursa membalas akun kosong — bukan error —
+        untuk alamat yang bukan akun sungguhan, dan dokumentasinya menyebut
+        jebakan ini eksplisit. Fixture yang mengembalikan `accountValue: 0`
+        sedang menggambarkan kondisi yang harus diperbaiki sistem, bukan
+        kondisi sehat — jadi test yang memakainya akan salah menilai dirinya.
+
+        Default `1000.0` = akun ada, punya collateral, dan tidak punya
+        posisi. Test yang butuh akun kosong harus bilang eksplisit lewat
+        `account_value=0`.
+        """
+        return {
+            "assetPositions": self._positions,
+            "marginSummary": {
+                "accountValue": str(self._account_value),
+                "totalNtlPos": "0",
+                "totalRawUsd": str(self._account_value),
+            },
+            "withdrawable": str(self._account_value),
+        }
 
     class _Info:
         def meta(inner):
@@ -628,10 +660,19 @@ class TestHealthCheck(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(eng.gate.engaged, "kill switch harus menyala")
 
     async def test_unknown_remote_position_blocks(self):
-        """Posisi di bursa tanpa catatan lokal = bahaya terbesar."""
-        ex = FakeExchange()
-        ex.positions = lambda: [
-            {"position": {"coin": "BTC", "szi": 0.5, "entryPx": 100.0}}]
+        """
+        Posisi di bursa tanpa catatan lokal = bahaya terbesar.
+
+        Posisi diberi lewat KONSTRUKTOR, bukan dengan menimpa
+        `ex.positions`. `_fetch_remote_positions()` membaca
+        `get_account_state()["assetPositions"]`; `positions()` hanya
+        helper yang membacanya. Menimpa method `positions` seperti
+        sebelumnya membuat test ini menguji jalur yang sudah tidak dipakai
+        produksi — testnya hijau, tapi tidak lagi menguji kode yang
+        benar-benar jalan.
+        """
+        ex = FakeExchange(positions=[
+            {"position": {"coin": "BTC", "szi": 0.5, "entryPx": 100.0}}])
         eng = self._wire(ex)
 
         h = await eng.health_check()
