@@ -606,10 +606,23 @@ class TestUnpatchedSmoke(unittest.TestCase):
 
     def setUp(self):
         self.saved = (tui.is_tty, tui._write, console._pause,
-                      tui.KeyReader, console.interactive)
+                      tui.KeyReader, console.interactive, console._read)
         tui._write = lambda *a, **k: None
         console._pause = lambda *a, **k: None
         tui.is_tty = lambda: True
+        # `console._read` ikut diganti. `ask_mode()` memanggil
+        # `show_banner()` yang memanggil `_read()` yang memanggil
+        # `input()`. pytest menangkap stdin, jadi tanpa ini dua test
+        # `ask_mode` gagal dengan:
+        #
+        #     OSError: pytest: reading from stdin while output is captured!
+        #
+        # `_read` sengaja TIDAK ditangani di sini sebagai no-op: nilainya
+        # menentukan alur. Test yang butuh nilai tertentu memasang
+        # `console._read`-nya sendiri.
+        self._pending_reads = []
+        console._read = lambda prompt: (
+            self._pending_reads.pop(0) if self._pending_reads else "x")
         # Dipaksa True, bukan dibiarkan `interactive()` yang memutuskan.
         # `interactive()` nyata bergantung pada `GetConsoleMode`, yang
         # selalu gagal saat stdout di-pipe — termasuk di test runner. Jadi
@@ -622,7 +635,7 @@ class TestUnpatchedSmoke(unittest.TestCase):
 
     def tearDown(self):
         (tui.is_tty, tui._write, console._pause, tui.KeyReader,
-         console.interactive) = self.saved
+         console.interactive, console._read) = self.saved
         os.environ.pop("HYPERLIQUID_PRIVATE_KEY", None)
 
     def _keys(self, keys):
