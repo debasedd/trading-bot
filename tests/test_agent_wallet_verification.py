@@ -52,8 +52,13 @@ from trading.live.client import (
 )
 
 MASTER = "0x5972698398d8c5bbe67c0db74906236691020417"
-SIGNER = "0x" + "11" * 20
-STRANGER = "0x" + "22" * 20
+# WAJIB mengandung huruf: `SIGNER.upper()` harus benar-benar berbeda dari
+# `SIGNER`, kalau tidak test case-sensitivity-nya kosong. Versi lama
+# memakai `0x` + "11"*20 — semua heksadesimal, jadi `.upper()` tidak
+# mengubah apa pun dan test-nya hijau tanpa menguji apa pun. Mutasi
+# "perbandingan jadi case-sensitive" selamat karena itu.
+SIGNER = "0xab" + "11" * 19
+STRANGER = "0xcd" + "22" * 19
 
 
 class _InfoDouble:
@@ -170,6 +175,24 @@ class TestSignerMustBeRegisteredAgent(unittest.TestCase):
 
 class TestAgentCheckIsReadOnly(unittest.TestCase):
     """Pemeriksaan agent tidak boleh mengirim apa pun."""
+
+    def test_fixture_addresses_actually_exercise_case_folding(self):
+        """
+        Kontrol untuk test case-sensitivity-nya sendiri.
+
+        `SIGNER` versi lama adalah `0x` + "11"*20 — semua heksadesimal, jadi
+        `.upper()` menghasilkan string yang IDENTIK. Test case-insensitivity
+        yang memakainya hijau tanpa menguji apa pun, dan mutasi
+        "perbandingan jadi case-sensitive" selamat karena itu.
+
+        Test ini gagal begitu ada konstanta yang kembali ke bentuk itu.
+        """
+        self.assertNotEqual(
+            SIGNER, SIGNER.upper(),
+            "SIGNER tidak punya huruf — test case-insensitivity jadi kosong",
+        )
+        self.assertEqual(len(SIGNER), 42, "bukan alamat Ethereum")
+        self.assertEqual(len(STRANGER), 42, "bukan alamat Ethereum")
 
     def test_only_calls_extra_agents(self):
         touched = []
