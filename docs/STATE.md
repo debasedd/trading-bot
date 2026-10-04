@@ -9,12 +9,12 @@ Terakhir: 2026-10-04 · Branch `fase-1`
 
 ## Ringkasan
 
-Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 6 dari 10 item selesai, dua gerbang
+Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   713 passed, 4 skipped          (0 failed, 0 xfailed)
-unittest: Ran 717 tests — OK
+pytest:   765 passed, 4 skipped          (0 failed, 0 xfailed)
+unittest: Ran 769 tests — OK (skipped=4)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
@@ -45,12 +45,31 @@ Temuan yang mengubah gambaran ada di `docs/reports/fase-1-partial.md` §5.
 | (e) | breakeven live | selesai | `caa57b1` |
 | (f) | funding dari bursa | belum | — |
 | (g) | filter `mode='live'` | sebagian | — |
-| (h) | kill switch | **sedang dikerjakan** | — |
+| (h) | kill switch | **belum** | — |
 | (i) | shutdown order resting | belum | — |
 | (j) | arming CLI | belum | — |
 
 Tambahan: pemisahan wallet `052950a`. DEFECT-6 (cloid) `34a3a72`.
 DEFECT-1 (`int()` pada field string) `3b91b9a`.
+
+**Koreksi tabel ini (2026-10-04):** (h) tadinya tertulis "sedang dikerjakan".
+Tidak ada commit untuk (h) di repo — `git log` tidak punya apa pun untuk
+kill switch di luar `a8afade` (config lewat parameter) dan pekerjaan
+mutation testing. Yang benar-benar masuk setelah `caa57b1` adalah:
+
+| Commit | Isi |
+|---|---|
+| `a8afade` | `RiskManager` menerima `config=`, bukan singleton |
+| `c224b58` | blokir jaringan + scrub env live di test suite |
+| `a3cb243` | guard tangkap pembocor state global |
+| `c1c1034` | konfigurasi mutmut |
+| `64acf92` | 8 test batas di safety/breaker (tiga celah mutasi) |
+| `8ea6d7c` | hasil mutation testing + pagar pencemar |
+| `bae1c86` | preflight saat start (`PreflightError` per cabang) |
+| `600f97f` | test startup gate tidak menulis ke kill switch produksi |
+
+Jadi (h)–(j) **semua belum**. "Sedang dikerjakan" jangan dibaca sebagai
+sedikit selesai — tidak ada kode (h) yang ditulis.
 
 **Gerbang 1:** test reproduksi hijau — **TERPENUHI** (0 xfailed).
 Chaos test dan smoke test testnet — **belum**, butuh testnet key.
@@ -198,6 +217,23 @@ python _per_file_gate.py            # tiap file sendiri-sendiri (pytest)
 python _per_file_gate.py --unittest # tiap file sendiri-sendiri (unittest)
 ```
 
+**Hash yang terakhir disweep: `055fd48`** — 25/25 hijau, 765 passed tiap
+seed. Tree tidak diubah selama sweep berjalan; angka itu berlaku untuk
+commit itu saja, bukan untuk HEAD berikutnya.
+
+Riwayat sweep yang sudah lewat:
+
+| Sweep | Commit | Hasil |
+|---|---|---|
+| 25 seed (awal) | `a3cb243` | 24/25 — seed 3 gagal, penyebabnya belum diketahui saat itu |
+| 25 seed (tree bersih) | `a3cb243` | 25/25 |
+| 25 seed (dengan guard jaringan + env) | `8ea6d7c` | 25/25, 731 passed |
+| 25 seed (preflight + pagar AST) | `055fd48` | 25/25, 765 passed |
+
+Sweep pertama setelah preflight **dibatalkan** karena pagar AST masih
+sedang disunting saat sweep berjalan. Angka dari sweep yang dibatalkan
+tidak dicatat di sini: ia berlaku untuk tree yang tidak pernah ada.
+
 Skrip gerbang di-`gitignore` — alat bantu pengukuran, bukan bagian produk.
 `_seed_sweep.py` menyimpan log lengkap tiap seed yang gagal ke
 `%TEMP%/seed_sweep_logs/`, karena "seed N gagal" tanpa alasan tidak bisa
@@ -344,19 +380,103 @@ PositionManager.open_position    60
 belum dikerjakan — daftar di atas bukan keterangan mutan yang selalu
 selamat, hanya yang perlu dibaca.
 
+## Pagar kode yang dimatikan — SELESAI
+
+`trading/live/client.py` pernah memuat:
+
+```python
+if False:  # MUTAN: validasi bentuk alamat dimatikan
+    raise RuntimeError(...)
+```
+
+Tiga kegagalan berantai, dan tidak ada yang bersuara. `git status` bersih,
+`pytest` hijau:
+
+1. Validasi bentuk alamat mati. `account_address="bukan-alamat"` lolos
+   dan tercatat "Preflight OK". Bursa tidak menolak string itu — dia
+   membalas akun kosong — jadi bot menyimpulkan tidak ada posisi padahal
+   posisi ada.
+2. `_is_address()` tidak pernah dipanggil di mana pun di repo.
+3. Test yang menutup cacat itu tetap hijau: ia bercabang ke
+   `signer_mismatch` lebih dulu lalu `assertIn("account_address", ...)`.
+   Dua cabang berbagi satu kata, jadi saling menyelamatkan.
+
+Pola yang sama seperti tiga jebakan di `fase-1-partial.md` §5.2.
+
+### Yang dipasang
+
+`PreflightError(RuntimeError)` dengan `code` stabil per cabang —
+`exchange_unreachable`, `universe_empty`, `bad_address`,
+`signer_mismatch`. Semua test mengunci `code`, tidak ada `assertIn` pada
+teks pesan. Tiap cabang punya test sendiri dengan konfigurasi yang
+membuktikan cabang lain tidak mungkin menyala.
+
+`tests/test_no_disabled_code.py` memindai `trading/` dan `run.py` dengan
+AST dan gagal bila ada kondisi konstan (`if False:`, `if True:`, `if 0:`,
+`if 1:`, `if None:`, `if not False:`) atau teks `MUTAN`. Dua kontrol
+negatif: pagar harus bisa menangkap pola itu, dan harus tetap lolos untuk
+`if x > 1:` / `if n == 1:` / `if flag:`.
+
+Mutasi mulai sekarang dilakukan lewat patch yang diterapkan lalu dicabut,
+bukan dengan menyunting file produksi di tempat.
+
+### Dua test source-inspection dihapus
+
+`test_source_calls_preflight_before_engine` dan
+`test_preflight_failure_propagates` membaca TEKS `run.py` dengan
+`inspect.getsource`. Keduanya hijau tanpa menjalankan apa pun, jadi tetap
+hijau kalau `preflight()` dipanggil di jalur kode mati, atau kalau
+pemanggilnya dibungkus `try/except` yang menelan exception — persis
+perilaku salah yang harus dicegah.
+
+Digantikan `tests/test_live_startup_gate.py`: menjalankan
+`_build_live_executor()` sungguhan dengan bursa mati pada batas SDK
+(`hyperliquid.info.Info`), lalu membuktikan `LiveEngine` tidak pernah
+dibangun dan loop tidak pernah mulai. Kontrak kode keluar dipindah dari
+blok `__main__` ke `_cli(argv) -> int` supaya bisa diuji sebagai
+perilaku, bukan sebagai teks.
+
+### Bukti cabutan
+
+| Mutan | Hasil |
+|---|---|
+| `if not self._is_address(value):` → `if False:` | 11 failed, 16 passed — 8 test bentuk alamat, 1 test masking, 2 pagar AST |
+| `exchange.preflight(...)` dihapus dari `run.py` | 4 failed, 7 passed — 3 test perilaku + pagar marker |
+
+### Temuan sampingan: test yang menulis ke kill switch produksi
+
+`_build_live_executor()` membangun `SafetyGate(live_cfg)` dengan
+`state_path` default, yaitu `data_store/live_counters.json`. Test startup
+memanggil fungsi itu sungguhan, jadi ia menulis ke file kill switch
+produksi. Saat mutan "preflight dihapus" diuji, engine sungguhan sempat
+jalan dan file itu muncul dengan `engaged: true` — kill switch palsu
+yang akan ditemukan operator sebagai aktif tanpa sebab.
+
+Dicek dengan menjalankan tiap kandidat satu per satu
+(`test_live_safety.py`, `test_bugfixes.py`, `test_api_wallet_separation.py`,
+`test_repro_live_defects.py`, `test_live_engine.py`) dan suite penuh:
+hanya jalur `_build_live_executor()` yang menyentuhnya. Diperbaiki di
+`600f97f` dengan mengarahkan gate ke tempfile.
+
 ## Berikutnya
 
 Pencemar urutan acak dan isolate test sudah beres. Urutan berikutnya
 mengikuti urutan operator 2026-10-04.
 
-1. **Mutation testing (butir 11)** — environment siap, hasil run belum
-   keluar. Lihat § Mutation testing.
+0. **Preflight saat start — SELESAI** (`bae1c86`, `600f97f`, `055fd48`).
+   Lihat § Pagar kode yang dimatikan. Ini bukan item (a)–(j); ditemukan
+   saat audit working tree, bukan dari daftar operator.
+1. **Mutation testing (butir 11)** — environment siap, hasil run sudah
+   keluar. Lihat § Mutation testing. Inventarisasi mutan selamat di
+   `executor.py` (909) dan `position_manager.py` (314) belum — itu
+   pekerjaan tersendiri.
 2. **Test batas (butir 12)** — tepat di limit, sedikit di bawah/atas,
    pergantian hari UTC, state setelah restart. Untuk breaker, kill switch,
-   dan partial fill.
+   dan partial fill. Bagian breaker sudah sebagian tertutup di `64acf92`.
 3. **Jam palsu di beberapa zona waktu (butir 5)** — jalankan suite dengan
    jam dibekuka di beberapa jam UTC dan zona waktu.
-4. **(h) kill switch** sesuai lingkup operator butir 10.
+4. **(h) kill switch** sesuai lingkup operator butir 10. Belum ada kode
+   yang ditulis — lihat koreksi tabel status di atas.
 5. **(g) sisa:** parameter `mode` di `get_daily_realized_pnl` dan semua
    pemanggil `get_open_positions`. Catatan: `close_position` ternyata
    **sudah** atomik (`WHERE id = ? AND status = 'OPEN'` plus `commit()` dan
