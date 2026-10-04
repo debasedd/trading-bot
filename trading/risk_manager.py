@@ -3,7 +3,7 @@ trading/risk_manager.py — Kalkulasi ukuran posisi, validasi leverage, batas ke
 """
 
 from decimal import Decimal, ROUND_DOWN
-from typing import Optional, Dict, List
+from typing import Any, Optional, Dict, List
 from core.config import get_config
 from core.logger import get_logger
 from trading.models import Order, TradeDecision, Side
@@ -44,7 +44,7 @@ class RiskManager:
     - Cek jumlah posisi terbuka
     """
 
-    def __init__(self, initial_balance: float = 0.0):
+    def __init__(self, initial_balance: float = 0.0, config: Optional[Any] = None):
         """
         Args:
             initial_balance: modal awal akun, dipakai sebagai penyebut batas
@@ -52,9 +52,29 @@ class RiskManager:
                 circuit breaker tidak bergantung pada saldo kas yang berubah
                 terus sepanjang hari. Nilai 0 berarti "belum diketahui" —
                 `validate_trade` akan jatuh ke `balance` sebagai ganti.
+            config: `AppConfig` yang Holds blok `risk` dan `fees`.
+
+                Default `None` membaca `get_config()`. Default itu dipertahankan
+                hanya supaya pemanggil produksi tidak berubah; jalur yang
+                diuji dan yang dipakai test adalah injeksi eksplisit.
+
+                Kenapa parameter ini ada: `get_config()` adalah SINGLETON
+                yang meng-cache `_config` di level modul. Membacanya di
+                sini berarti setiap RiskManager yang dibangun SETELAH test
+                atau kode lain mengubah config global mewarisi perubahan itu
+                — dan tidak ada yang bisa melihatnya di call site. Angka
+                `max_daily_loss` yang jadi penyebut daily-loss breaker ikut
+                bergeser tanpa jejak.
+
+                Yang dibaca di sini di-SNAPSHOT ke atribut, bukan disimpan
+                sebagai rujukan ke config global. Kalau rujukannya disimpan,
+                test yang menulis `get_config().fees.taker` masih bisa
+                mengubah manager yang sudah hidup.
         """
-        self.config = get_config().risk
-        self.fees = get_config().fees
+        if config is None:
+            config = get_config()
+        self.config = config.risk
+        self.fees = config.fees
         self._daily_pnl: float = 0.0
         self._daily_reset_date: str = ""
         self._initial_balance: float = float(initial_balance or 0.0)
