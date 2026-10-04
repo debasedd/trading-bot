@@ -177,33 +177,60 @@ class TestExchangeUnreachable(unittest.TestCase):
 
     def test_preflight_never_sends_an_order(self):
         """
-        Preflight HANYA membaca.
+        Preflight HANYA membaca, dan tidak menyentuh apa pun yang
+        menulis.
 
         Preflight yang diam-diam mengirim order sama bobotnya dengan tidak
         ada preflight sama sekali — makanya `_Watchful` di sini: setiap
-        atribut yang bukan `meta` dianggap percobaan kirim order.
+        atribut yang bukan operasi baca yang diizinkan dianggap percobaan
+        kirim order.
+
+        Daftar yang diizinkan itu eksplisit, bukan "apa pun yang bukan
+        meta": `user_state` dan `spot_user_state` memang operasi baca,
+        dan preflight membutuhkannya untuk memeriksa apakah akun benar-benar
+        ada. Yang tidak boleh muncul: `exchange` (klien order),
+        `place_limit_order`, `place_trigger_order`, `cancel_*`, dan apa pun
+        lain di luar daftar.
         """
         sent = []
+        allowed_reads = {
+            "meta",                      # connectivity + universe
+            "user_state",                # margin/posisi perps
+            "spot_user_state",           # saldo spot
+            "extra_agents",              # verifikasi agent wallet
+        }
 
         class _Watchful:
             def meta(self):
                 return {"universe": [{"name": "BTC"}]}
 
+            def user_state(self, address, dex=""):
+                return {"assetPositions": [],
+                        "marginSummary": {"accountValue": "1000",
+                                          "withdrawable": "1000"}}
+
+            def spot_user_state(self, address):
+                return {"balances": [{"coin": "USDC", "total": "1000",
+                                      "hold": "0"}]}
+
+            def extra_agents(self, user):
+                return []
+
             def __getattr__(self, name):
                 # `__getattr__` hanya dipanggil untuk atribut yang TIDAK
-                # didefinisikan di atas, jadi `meta` sendiri aman.
+                # didefinisikan di atas, jadi yang diizinkan aman.
                 def spy(*a, **kw):
                     sent.append(name)
                     raise AssertionError(
-                        "preflight memanggil %s — itu di luar operasi "
-                        "baca yang boleh dipakai untuk cek koneksi" % name)
+                        "preflight memanggil %s — di luar operasi baca "
+                        "yang diizinkan" % name)
                 return spy
 
         _ExchangeDouble(_Watchful()).preflight()
         self.assertEqual(
             sent, [],
-            "preflight hanya boleh memakai meta() dan validasi bentuk alamat; "
-            "operasi lain berarti ia mulai menyentuh bursanya: %s" % (sent,),
+            "preflight hanya boleh memakai operasi baca: %s; yang dipanggil: "
+            "%r" % (sorted(allowed_reads), sent),
         )
 
 

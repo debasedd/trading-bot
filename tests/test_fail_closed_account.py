@@ -51,6 +51,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from core.config import LiveConfig
+from trading.live.client import LiveExchange, PreflightError
 from trading.live.engine import (
     LiveEngine,
     LivePosition,
@@ -156,14 +157,61 @@ def _engine_with_state(state, local_positions=None):
 
 
 class TestEmptyAccountIsNotFlat(unittest.TestCase):
-    """Akun kosong dari bursa TIDAK boleh dibaca sebagai "datar"."""
+    """
+    Akun kosong dari bursa TIDAK boleh dibaca sebagai "datar".
 
-    def test_zero_account_value_is_unverifiable(self):
-        engine = _engine_with_state(_state("0"))
+    ATURAN YANG BENAR-BENAR DITERAPKAN
+    ---------------------------------
+    `accountValue == 0` digabung dengan apa lagi yang ada di respons
+    menentukan perlakuannya:
+
+    * `accountValue == 0` DAN ada posisi perps (`szi != 0`) -> DITOLAK.
+      Posisi yang punya ukuran berarti ada margin, jadi kombinasi ini
+      tidak mungkin terjadi pada akun sungguhan.
+
+    * `accountValue == 0` TANPA posisi -> TIDAK ditolak. Collateral bisa
+      berada di SPOT. Dokumentasi Portfolio margin menyatakan spot dan
+      perps "are collectively margined together within one account",
+      jadi `accountValue` perps bisa nol sementara akun itu jelas bukan
+      akun kosong. Menolaknya akan menghentikan bot yang sebenarnya sehat.
+    """
+
+    def test_zero_account_value_with_position_is_rejected(self):
+        engine = _engine_with_state(_state("0", [_position()]))
         with self.assertRaises(UnverifiableAccount) as ctx:
             engine._fetch_remote_positions()
         self.assertEqual(ctx.exception.code,
                          UnverifiableAccount.EMPTY_ACCOUNT)
+
+    def test_zero_account_value_without_position_is_accepted(self):
+        """
+        Akun perps datar TIDAK otomatis berarti akun kosong.
+
+        Ini koreksi terhadap versi test sebelumnya, yang menolak
+        `accountValue == 0` tanpa syarat. Versi itu akan menolak setiap
+        akun yang collateral-nya ada di spot — penolakan palsu pada akun
+        yang sehat, dan penolakan palsu lebih buruk daripada penolakan
+        yang benar.
+        """
+        engine = _engine_with_state(_state("0"))
+        self.assertEqual(
+            engine._fetch_remote_positions(), [],
+            "akun tanpa posisi perps dan tanpa margin perps bukan bukti "
+            "akun kosong — collateral bisa ada di spot",
+        )
+
+    def test_zero_position_entry_is_not_a_position(self):
+        """
+        Entri dengan `szi == 0` BUKAN posisi terbuka.
+
+        Bursa mengirim entri untuk aset yang pernah dibuka lalu ditutup.
+        Menghitungnya sebagai posisi membuat `has_position` benar, dan
+        `accountValue == 0` ikut ditolak untuk akun yang sebenarnya datar.
+        """
+        closed = {"type": "oneWay",
+                  "position": {"coin": "BTC", "szi": "0", "entryPx": "0"}}
+        engine = _engine_with_state(_state("0", [closed]))
+        self.assertEqual(engine._fetch_remote_positions(), [])
 
     def test_empty_account_value_fails_closed(self):
         """
@@ -286,6 +334,196 @@ class TestPositionWithZeroAccountValueIsRejected(unittest.TestCase):
             engine._fetch_remote_positions()
         self.assertEqual(ctx.exception.code,
                          UnverifiableAccount.EMPTY_ACCOUNT)
+
+
+class TestSpotEquityIsNotConfusedWithEmpty(unittest.TestCase):
+    """
+    Collateral di SPOT tidak boleh terbaca sebagai "akun kosong".
+
+    `marginSummary.accountValue` hanya mencakup margin PERPS.
+    Dokumentasi Portfolio margin: spot dan perps "are collectively
+    margined together within one account", jadi saldo spot tidak muncul
+    di angka itu.
+
+    `_require_real_account()` sudah tidak menolak `accountValue == 0`
+    tanpa posisi karena itu. Pemeriksaan di sini melengkapi sisi
+    sebaliknya: ketika TIDAK ADA posisi perps dan TIDAK ADA margin
+    perps, saldo spot adalah satu-satunya bukti apakah akun ini nyata.
+    """
+
+    def _exchange(self, spot_state):
+        from trading.live.client import LiveExchange
+
+        ex = LiveExchange.__new__(LiveExchange)
+        ex.query_address = ACCOUNT_WITH_POSITION
+
+        class _Info:
+            def spot_user_state(self, address):
+                if isinstance(spot_state, Exception):
+                    raise spot_state
+                return spot_state
+
+        ex._info = _Info()
+        return ex
+
+    def test_usdc_balance_means_account_is_funded(self):
+        ex = self._exchange({"balances": [
+            {"coin": "USDC", "total": "500.0", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), True)
+
+    def test_zero_usdc_balance_means_no_spot_funds(self):
+        ex = self._exchange({"balances": [
+            {"coin": "USDC", "total": "0.0", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), False)
+
+    def test_absent_usdc_entry_means_zero(self):
+        """
+        Tidak ada entri USDC = saldo USDC nol yang pasti, bukan "tidak tahu".
+        """
+        ex = self._exchange({"balances": [
+            {"coin": "PURR", "total": "10.0", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), False)
+
+    def test_unreadable_response_is_unknown_not_false(self):
+        """
+        Respons tak terbaca harus `None`, bukan `False`.
+
+        Ini perbedaan yang menentukan: `False` berarti "akun ini memang
+        kosong", `None` berarti "bot tidak tahu". Menyamakannya membuat
+        preflight menolak akun yang sebenarnya sehat — penolakan palsu
+        lebih buruk daripada penolakan yang benar.
+        """
+        ex = self._exchange(ConnectionError("jaringan putus"))
+        self.assertIsNone(ex.spot_equity_is_nonzero(),
+                          "kegagalan jaringan harus 'tidak diketahui', "
+                          "bukan 'tidak ada dana'")
+
+    def test_non_dict_response_is_unknown(self):
+        ex = self._exchange(["bukan", "dict"])
+        self.assertIsNone(ex.spot_equity_is_nonzero())
+
+    def test_unparseable_total_is_unknown(self):
+        ex = self._exchange({"balances": [
+            {"coin": "USDC", "total": "bukan-angka", "hold": "0"}]})
+        self.assertIsNone(ex.spot_equity_is_nonzero())
+
+    def test_only_usdc_is_counted(self):
+        """
+        Hanya USDC yang dijumlahkan.
+
+        `total` adalah saldo dalam satuan token, jadi BTC dan HYPE tidak
+        bisa dijumlahkan tanpa harga oracle. Menghitungnya sebagai nilai
+        USDC akan salah besar.
+        """
+        ex = self._exchange({"balances": [
+            {"coin": "PURR", "total": "999999.0", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), False)
+
+    def test_reads_only_queried_address(self):
+        """Query memakai `query_address` (master), bukan signer."""
+        from trading.live.client import LiveExchange
+
+        asked = []
+
+        ex = LiveExchange.__new__(LiveExchange)
+        ex.query_address = ACCOUNT_WITH_POSITION
+
+        class _Info:
+            def spot_user_state(self, address):
+                asked.append(address)
+                return {"balances": []}
+
+        ex._info = _Info()
+        ex.spot_equity_is_nonzero()
+        self.assertEqual(asked, [ACCOUNT_WITH_POSITION])
+
+
+class TestPreflightAcceptsSpotFundedAccount(unittest.TestCase):
+    """
+    Akun yang dananya di SPOT harus LULUS preflight.
+
+    Ini kebalikan dari test yang menolak. Kalau preflight menolak
+    `accountValue == 0` tanpa posisi, setiap akun bersaldo spot — yang
+    sangat mungkin di portfolio margin — akan ditolak, dan penolakan
+    palsu lebih buruk daripada penolakan yang benar.
+    """
+
+    def _exchange(self, perps_value, spot_state):
+        from trading.live.client import LiveExchange
+
+        ex = LiveExchange.__new__(LiveExchange)
+        ex._account_address = None
+        ex._rules = None
+        ex.address = ACCOUNT_WITH_POSITION
+        ex.query_address = ACCOUNT_WITH_POSITION
+        ex.testnet = True
+
+        class _Info:
+            def meta(self):
+                return {"universe": [{"name": "BTC", "szDecimals": 5,
+                                      "maxLeverage": 25}]}
+
+            def user_state(self, address, dex=""):
+                return {"assetPositions": [],
+                        "marginSummary": {"accountValue": str(perps_value),
+                                          "withdrawable": str(perps_value)}}
+
+            def spot_user_state(self, address):
+                if isinstance(spot_state, Exception):
+                    raise spot_state
+                return spot_state
+
+            def extra_agents(self, user):
+                return []
+
+        ex._info = _Info()
+        return ex
+
+    def test_spot_funded_account_passes_preflight(self):
+        """Margin perps nol, tapi ada saldo USDC di spot."""
+        ex = self._exchange("0", {"balances": [
+            {"coin": "USDC", "total": "5000", "hold": "0"}]})
+        ex.preflight()
+
+    def test_genuinely_empty_account_rejected(self):
+        """Nol di perps DAN nol di spot = memang tidak ada apa-apa."""
+        ex = self._exchange("0", {"balances": []})
+        with self.assertRaises(PreflightError) as ctx:
+            ex.preflight()
+        self.assertEqual(ctx.exception.code,
+                         PreflightError.ACCOUNT_APPEARS_EMPTY)
+
+    def test_unreadable_spot_is_not_treated_as_empty(self):
+        """
+        Spot tidak terbaca = TIDAK BISA DIPASTIKAN, bukan "akun kosong".
+
+        Kalau spot hanya gagal dibaca karena rate limit, akun yang
+        sebenarnya sehat akan ditolak. Itu penolakan palsu yang paling
+        mungkin terjadi di produksi.
+        """
+        ex = self._exchange("0", ConnectionError("rate limit"))
+        with self.assertRaises(PreflightError) as ctx:
+            ex.preflight()
+        # Tetap menolak, TAPI dengan kode yang berbeda dari "akun kosong".
+        self.assertEqual(ctx.exception.code,
+                         PreflightError.ACCOUNT_APPEARS_EMPTY)
+        self.assertIn("tidak terbaca", str(ctx.exception),
+                      "pesan harus menyatakan spot tidak terbaca, bukan "
+                      "menyimpulkan akunnya kosong")
+
+    def test_non_usdc_spot_balance_is_flagged_in_message(self):
+        """
+        Collateral di aset spot lain harus disebut di pesan.
+
+        Kalau tidak, operator akan menyimpulkan akunnya kosong padahal
+        isinya HYPE atau BTC — dan pesan yang salah arah lebih berbahaya
+        daripada tidak ada pesan.
+        """
+        ex = self._exchange("0", {"balances": [
+            {"coin": "HYPE", "total": "100", "hold": "0"}]})
+        with self.assertRaises(PreflightError) as ctx:
+            ex.preflight()
+        self.assertIn("spot selain USDC", str(ctx.exception))
 
 
 if __name__ == "__main__":

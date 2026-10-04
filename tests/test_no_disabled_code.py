@@ -183,5 +183,81 @@ class TestNoMutationMarkersInProduction(unittest.TestCase):
         self.assertIn("run.py", names, "run.py harus ikut dipindai")
 
 
+class TestHelpersStayInsideTests(unittest.TestCase):
+    """
+    Helper yang HANYA untuk test tidak boleh masuk ke jalur produksi.
+
+    `_redirect_log_handlers()` menutup handle file logging yang sudah
+    terpasang lalu mengarahkannya ke folder temporer. Itu benar untuk test:
+    tanpa itu, suite menimpa `data_store/logs/trading_bot.log` milik
+    operator.
+
+    Dipanggil dari produksi, helper yang sama justru merusak: setiap
+    start bot akan menutup handle log milik operator dan menulis log ke
+    folder temporer yang dihapus setelah test. Log itu hilang tepat ketika
+    ada yang perlu dibaca.
+
+    Pagar ini memeriksa HAL FAKTA: helper itu tidak boleh dirujuk dari
+    luar `tests/`. Yang dicek lewat AST, bukan grep, supaya penyebutan di
+    dalam docstring tidak dihitung sebagai pemanggilan.
+    """
+
+    def _referenced_files(self, symbol):
+        """
+        Daftar file yang MENYebut `symbol`, dengan nama file yang disebut.
+        """
+        hits = []
+        for path in REPO_ROOT.rglob("*.py"):
+            parts = {p.lower() for p in path.parts}
+            if "__pycache__" in parts or ".git" in parts:
+                continue
+            if "build" in parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"),
+                                 filename=str(path))
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id == symbol:
+                    hits.append(path)
+                    break
+                if isinstance(node, ast.Attribute) and node.attr == symbol:
+                    hits.append(path)
+                    break
+        return hits
+
+    def test_log_redirect_helper_is_only_referenced_by_tests(self):
+        offenders = [
+            p.relative_to(REPO_ROOT).as_posix()
+            for p in self._referenced_files("_redirect_log_handlers")
+            if "tests" not in p.parts
+        ]
+        self.assertEqual(
+            offenders, [],
+            "helper test-only dirujuk dari jalur produksi: %s. Kalau "
+            "dipanggil saat bot start, log operator akan ditulis ke "
+            "folder temporer dan hilang tepat ketika dibutuhkan."
+            % offenders,
+        )
+
+    def test_control_the_scanner_actually_detects_a_reference(self):
+        """
+        Kontrol negatif: pemindai harus bisa menemukan penyebutan.
+
+        Pagar yang tidak pernah berbunyi akan hijau selamanya.
+        """
+        hits = self._referenced_files("_redirect_log_handlers")
+        self.assertTrue(
+            hits, "pemindai tidak menemukan referensi sama sekali — "
+                  "pagar ini tidak berguna",
+        )
+        self.assertTrue(
+            all("tests" in p.parts for p in hits),
+            "referensi yang ditemukan semuanya ada di tests/: %r"
+            % [p.as_posix() for p in hits],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

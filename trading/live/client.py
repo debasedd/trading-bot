@@ -61,6 +61,7 @@ class PreflightError(RuntimeError):
     SIGNER_MISMATCH = "signer_mismatch"
     AGENT_NOT_REGISTERED = "agent_not_registered"
     AGENT_CHECK_FAILED = "agent_check_failed"
+    ACCOUNT_APPEARS_EMPTY = "account_appears_empty"
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -493,6 +494,58 @@ class LiveExchange:
             mask_address(self.address), mask_address(master),
         )
 
+    def spot_equity_is_nonzero(self) -> Optional[bool]:
+        """
+        True/False kalau saldo spot diketahui, None kalau TIDAK bisa dibaca.
+
+        Kenapa perlu: `marginSummary.accountValue` di `clearinghouseState`
+        hanya mencakup margin PERPS. Dokumentasi Portfolio margin
+        menyatakan spot dan perps "are collectively margined together",
+        jadi sebuah akun bisa punya dana yang seluruhnya di spot dan
+        `accountValue` tetap nol.
+
+        Mengembalikan `None` untuk "tidak diketahui", bukan `False`.
+        Itu perbedaan yang menentukan: `False` berarti "akun ini memang
+        kosong", `None` berarti "bot tidak tahu". Menyamakan keduanya
+        akan membuat preflight menolak akun yang sebenarnya sehat —
+        dan penolakan palsu lebih buruk daripada penolakan yang benar.
+
+        Endpoint: `spotUserState` / `Info.spot_user_state`. Bentuk balasan
+        diambil dari SDK resmi, bukan dari asumsi:
+
+            {"balances": [{"coin": str, "total": str, "hold": str}, ...],
+             ...}
+
+        `total` adalah saldo token itu dalam satuan token, jadi banyak
+        aset yang nilainya tidak bisa dijumlahkan tanpa harga. Yang
+        dihitung di sini HANYA `USDC` — denom quote, dan satu-satunya
+        yang bisa dijumlahkan tanpa oracle.
+        """
+        try:
+            spot = self.info.spot_user_state(self.query_address)
+        except Exception:  # noqa: BLE001
+            # Sengaja tidak logging di sini: pemanggil yang memutuskan apakah ini
+            # penting. Melempar juga salah, karena "tidak bisa baca" bukan
+            # "tidak ada".
+            return None
+
+        if not isinstance(spot, dict):
+            return None
+
+        for balance in (spot.get("balances") or []):
+            if not isinstance(balance, dict):
+                continue
+            coin = str(balance.get("coin") or "").strip().upper()
+            if coin != "USDC":
+                continue
+            try:
+                total = float(balance.get("total") or 0.0)
+            except (TypeError, ValueError):
+                return None
+            return total > 0.0
+        # Tidak ada entri USDC sama sekali = saldo USDC nol yang pasti.
+        return False
+
     def preflight(self, allow_api_wallet: bool = False) -> None:
         """
         Pastikan bursa hidup dan kredensial benar SEBELUM order pertama.
@@ -591,6 +644,55 @@ class LiveExchange:
         # itu diterima.
         if allow_api_wallet:
             self.verify_agent_wallet()
+
+        # 6. Akun yang tampak kosong dari perps TIDAK otomatis kosong.
+        #
+        # `accountValue` hanya mencakup margin perps. Kalau collateral
+        # ada di SPOT, angka itu nol sementara akunnya jelas nyata.
+        # Dokumentasi Portfolio margin: spot dan perps "are collectively
+        # margined together within one account".
+        #
+        # Yang checked di sini HANYA kasus yang tidak mungkin diexplain
+        # oleh spot: `accountValue == 0`, tidak ada posisi, DAN saldo spot
+        # USDC juga nol atau tidak terbaca. Kombinasi itu tidak
+        # cocok dengan akun sungguhan.
+        #
+        # `None` (spot tidak terbaca) ikut menghitung sebagai "tidak bisa
+        # memastikan" — bukan "tidak ada". Membedakannya penting: kalau
+        # spot hanya hilang karena rate limit, akun yang sebenarnya sehat
+        # akan ditolak, dan penolakan palsu lebih buruk daripada penolakan
+        # yang benar.
+        state = self.get_account_state()
+        margin = (state.get("marginSummary") or {}) if isinstance(state, dict) else {}
+        try:
+            perps_value = float(margin.get("accountValue") or 0.0)
+        except (TypeError, ValueError):
+            perps_value = 0.0
+        has_position = any(
+            float((p.get("position") or {}).get("szi") or 0.0) != 0.0
+            for p in ((state.get("assetPositions") or [])
+                      if isinstance(state, dict) else [])
+            if isinstance(p, dict)
+        )
+        if perps_value <= 0.0 and not has_position:
+            spot = self.spot_equity_is_nonzero()
+            if spot is not True:
+                raise PreflightError(
+                    PreflightError.ACCOUNT_APPEARS_EMPTY,
+                    "Akun tidak punya margin perps (accountValue=%.6f), "
+                    "tidak ada posisi, dan saldo spot USDC %s. Kombinasi "
+                    "ini tidak cocok dengan akun sungguhan. Kemungkinan "
+                    "besar: `account_address` bukan akun yang memegang "
+                    "posisi%s."
+                    % (
+                        perps_value,
+                        "tidak terbaca (jadi tidak bisa dipastikan)"
+                        if spot is None else "nol",
+                        ", atau collateral-nya ada di aset spot selain "
+                        "USDC — bot ini hanya menghitung USDC"
+                        if spot is False else "",
+                    )
+                )
 
         logger.info(
             "Preflight OK: %d aset, query %s", len(universe),

@@ -554,14 +554,44 @@ class LiveEngine:
         tetap punya collateral, jadi `accountValue` bukan nol. Akun yang
         tidak ada membalas nol.
 
-        Ambang `accountValue == 0` dipilih karena:
-          * Nol itu mungkin secara teori (semua dana ditarik, akun baru),
-            tapi pada kasus itu tidak ada posisi untuk dilindungi, dan
-            operator yang melihat kill switch menyala akan cenderung
-            benar: dia memang perlu memeriksa akunnya.
-          * Menolak `accountValue` kecil yang bukan nol akan menolak akun
-            dust yang sah, dan penolakan palsu lebih buruk daripada
-            penolakan yang benar.
+        AMBANG `accountValue == 0` — DAN BATASNYA
+        -------------------------------------------
+        Dokumentasi Hyperliquid (Portfolio margin) menyatakan bahwa
+        "a user's spot and perps trading are unified", dan semua
+        cross margin perps posisi serta saldo spot "are collectively
+        margined together within one account".
+
+        Artinya `marginSummary.accountValue` di `clearinghouseState`
+        TIDAK boleh dibaca sebagai "seluruh dana akun ada di sini".
+        Kalau collateral ada di SPOT, angka perps bisa terlihat nol
+        sementara akun itu jelas bukan akun kosong.
+
+        Konsekuensi untuk aturan ini:
+
+        * `accountValue == 0` dengan posisi perps terbuka = DALAM YANG
+          SEHARUSNYA TIDAK MUNGKIN. Posisi yang punya ukuran berarti ada
+          margin, jadi `accountValue` nol bersamaan dengan `szi != 0`
+          menunjukkan bentuk respons yang bukan akun nyata.
+        * `accountValue == 0` tanpa posisi perps = TIDAK bisa dibedakan
+          dari akun bersaldo spot, jadi TIDAK LAGI ditolak di sini.
+          Bot yang datar tidak butuh proteksi posisi, dan menolak akun
+          bersaldo spot akan menghentikan bot yang sebenarnya sehat.
+
+        `_require_real_account()` menolak varian pertama
+        (`value <= 0` DAN ada posisi). Varian kedua ditangani oleh
+        pemanggil: `reconcile()` tidak perlakukannya sebagai
+        "akun kosong", hanya sebagai "tidak ada posisi perps", dan
+        `preflight()` memeriksa ekuitas spot lewat
+        `LiveExchange.spot_equity_is_nonzero()` supaya akun bersaldo
+        spot tidak lolos sebagai "tidak ada apa-apa".
+
+        PEMERIKSAAN SPOT YANG MASIH KURANG
+        -----------------------------------
+        `spotUserState` adalah endpoint TERPISAH dari `clearinghouseState`,
+        dan pemanggilannya harus lengkap: kalau responsnya tidak bisa
+        dibaca, hasilnya "tidak diketahui", bukan "tidak ada". Itu belum
+        diimplementasikan di sini dan dicatat sebagai pekerjaan terpisah —
+        lebih baik menyatakan tidak diketahui daripada menebak.
         """
         if not isinstance(state, dict):
             raise UnverifiableAccount(
@@ -583,15 +613,25 @@ class LiveEngine:
                 "accountValue bukan angka: %r" % (raw,),
                 UnverifiableAccount.MALFORMED) from None
 
-        if value <= 0.0:
+        has_position = any(
+            float((p.get("position") or {}).get("szi") or 0.0) != 0.0
+            for p in (state.get("assetPositions") or [])
+            if isinstance(p, dict)
+        )
+
+        # Hanya tolak kalau nol DAN ada posisi. `accountValue == 0`
+        # tanpa posisi bisa berarti saldo ada di spot — lihat docstring.
+        if value <= 0.0 and has_position:
             raise UnverifiableAccount(
-                "accountValue=%.6f — bursa membalas akun kosong. Dua "
-                "kemungkinan: alamat query bukan akun yang memegang "
-                "posisi (mis. signer/agent wallet yang dipakai "
-                "sebagai alamat query), atau akunnya memang belum "
-                "punya dana. Bot tidak bisa membedakannya dari "
-                "respons ini, jadi perlakuannya fail closed."
-                % value)
+                "accountValue=%.6f padahal ada posisi perps terbuka. "
+                "Posisi yang punya ukuran berarti ada margin, jadi "
+                "kombinasi ini menunjukkan bentuk respons yang bukan akun "
+                "nyata. Kemungkinan besar alamat query bukan akun yang "
+                "memegang posisi (mis. signer/agent wallet yang dipakai "
+                "sebagai alamat query). Perhatikan juga: Collateral bisa "
+                "berada di SPOT — kalau akun ini memakai portfolio "
+                "margin, periksa juga saldo spot sebelum menyimpulkan "
+                "apa pun." % value)
         return value
 
     @staticmethod
