@@ -177,6 +177,27 @@ class SafetyGate:
     jauh lebih berharga daripada "tidak dikirim".
     """
 
+    #: SATU-SATUNYA sumber daftar nilai yang berarti "off" untuk
+    #: `TRADEBOT_LIVE_KILL_SWITCH`. Dulu daftar ini ada di DUA tempat dan
+    #: keduanya berbeda: `__init__` memakai
+    #: `("0", "false", "no", "off")` sementara `master_blockers` memakai
+    #: `("", "0", "false", "no")`.
+    #:
+    #: Akibatnya operator yang menyetel `TRADEBOT_LIVE_KILL_SWITCH=off`
+    #: melihat switch dilepas di log, sementara `master_blockers()` tetap
+    #: mengembalikan `KILL_SWITCH` dan menolak setiap order — tanpa satu
+    #: pesan pun yang bilang release-nya diabaikan.
+    #:
+    #: Dua daftar untuk satu konsep adalah tempat bug hidup. Sekarang
+    #: hanya ada satu, dan `tests/test_kill_switch_policy.py` memverifikasi
+    #: bahwa kedua pemakai benar-benar mengacunya.
+    #:
+    #: `""` SENGAJA TIDAK ada di sini. Env yang tidak di-set adalah keadaan
+    #: ketiga: ia harus mengikuti apa yang tersimpan di disk. Kalau `""`
+    #: diperlakukan sebagai "off", bot yang restart dengan konfigurasi
+    #: bersih akan diam-diam melepas switch yang sengaja dinyalakan.
+    KILL_SWITCH_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
     def __init__(self, cfg: LiveConfig, env: Optional[dict] = None,
                  state_path=None):
         self.cfg = cfg
@@ -200,6 +221,17 @@ class SafetyGate:
             # File mungkin berisi state hari yang sudah lewat. Setelah
             # load, cek ulang supaya angka basi tidak dipakai.
             self.counters.rollover_if_needed()
+            # FAIL CLOSED: file yang ada tapi tidak terbaca berarti angka
+            # batas hari ini tidak diketahui, dan batas yang tidak diketahui
+            # berarti tidak ada batas.
+            #
+            # Dulu kondisi ini hanya menambah blocker
+            # `COUNTER_STATE_UNREADABLE`, jadi `engaged` tetap False dan
+            # `health_check()` melaporkan `kill_switch: False` sementara
+            # gerbang sebenarnya menolak setiap order — laporan yang
+            # berlawanan dengan kenyataan.
+            if not self.counters.readable:
+                self.counters.engaged = True
         else:
             # Tanpa file, `engaged` harus mulai dari False dan TIDAK boleh
             # menyalin apa pun dari disk. Ini yang membuat test terisolasi:
@@ -226,7 +258,7 @@ class SafetyGate:
         # dengan konfigurasi bersih akan diam-diam melepas switch yang
         # sengaja dinyalakan.
         raw_kill = str(self.env.get("TRADEBOT_LIVE_KILL_SWITCH", "") or "").strip().lower()
-        if raw_kill and raw_kill not in ("0", "false", "no", "off"):
+        if raw_kill and raw_kill not in self.KILL_SWITCH_OFF_VALUES:
             self.counters.engaged = True
             logger.error(
                 "KILL SWITCH aktif karena TRADEBOT_LIVE_KILL_SWITCH diset. "
@@ -342,9 +374,18 @@ class SafetyGate:
             blockers.append(Blocker.NOT_CONFIRMED)
 
         # 3. Kill switch.
-        if self.engaged or str(self.env.get("TRADEBOT_LIVE_KILL_SWITCH", "")) not in (
-            "", "0", "false", "no"
-        ):
+        #
+        # Mengakai `KILL_SWITCH_OFF_VALUES` — konstanta yang sama dengan
+        # `__init__`. Dulu daftar di sini berbeda (`""` ikut masuk), dan
+        # itu membuat `TRADEBOT_LIVE_KILL_SWITCH=off` melepas switch di
+        # `__init__` tapi memblokir di sini.
+        #
+        # Env yang tidak di-set (`""`) TIDAK masuk daftar off, jadi
+        # kondisi di bawah ini setara dengan `self.engaged`: ia mengikuti
+        # disk, bukan memaksa apa pun.
+        if self.engaged or (str(
+                self.env.get("TRADEBOT_LIVE_KILL_SWITCH", "")).strip().lower()
+                not in {""} | self.KILL_SWITCH_OFF_VALUES):
             blockers.append(Blocker.KILL_SWITCH)
 
         # 4. Private key harus ada.
