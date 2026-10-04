@@ -18,6 +18,10 @@ ada file state produksi yang dibaca atau ditulis.
 """
 import pathlib
 import tempfile
+from collections import deque
+from contextlib import contextmanager
+
+from core.market_store import PRICE_HISTORY_MAX
 
 from core.config import LiveConfig
 from trading.live.safety import SafetyGate
@@ -109,3 +113,51 @@ def inside_trading_window(cfg=None):
     )
     eng.now_fn = lambda: datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc)
     return eng
+
+
+@contextmanager
+def market_price(symbol, price):
+    """
+    Set harga sementara lalu pulihkan state global apa adanya.
+
+    `market_store` adalah SINGKTON tanpa API reset. `set_price(0.0)`
+    tidak mengosongkan apa pun -- `set_price` menolak nilai yang bukan
+    positif, jadi harga lama dan SEJARUHNYA tetap ada.
+
+    Itu bukan detail kecil. `MarketEngine` menghitung harga eksekusi dari
+    median riwayat, jadi satu harga yang tertinggal di test sebelumnya
+    membuat test berikutnya gagal dengan:
+
+        Harga tidak layak eksekusi: harga 60000 menyimpang 29.763%
+        dari median 85425
+
+    Test breakeven punya harga ini, dan `unittest` (yang tidak mengisolasi
+    test per file) ikut gagal karena itu. Pulihkan dari dalam, bukan
+    mengandalkan urutan test.
+    """
+    from core.market_store import market_store
+
+    store = market_store.__dict__
+    had_history = symbol in store["_price_history"]
+    saved_hist = (
+        list(store["_price_history"][symbol]) if had_history else None)
+    saved_last = store["_last_prices"].get(symbol)
+    saved_ts = store["_price_ts"].get(symbol)
+
+    market_store.set_price(symbol, price)
+    try:
+        yield market_store
+    finally:
+        if had_history:
+            store["_price_history"][symbol] = deque(
+                saved_hist, maxlen=PRICE_HISTORY_MAX)
+        else:
+            store["_price_history"].pop(symbol, None)
+        if saved_last is None:
+            store["_last_prices"].pop(symbol, None)
+        else:
+            store["_last_prices"][symbol] = saved_last
+        if saved_ts is None:
+            store["_price_ts"].pop(symbol, None)
+        else:
+            store["_price_ts"][symbol] = saved_ts

@@ -46,7 +46,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from database.models import Position
-from repro_helpers import inside_trading_window
+from repro_helpers import market_price
 
 
 class _Scalp:
@@ -168,9 +168,15 @@ class BreakevenLiveTestBase(unittest.IsolatedAsyncioTestCase):
 
         # Harga 0.5% di atas entry: melewati breakeven_trigger_pct (0.4%)
         # sehingga versi lama AKAN menulis SL baru ke DB.
-        from core.market_store import market_store
-
-        market_store.set_price("BTC/USDT:USDT", 85000.0 * 1.005)
+        #
+        # DIBUNGKUS `market_price` karena `market_store` itu sington tanpa
+        # API reset. Versi lama memanggil `set_price()` langsung dan
+        # meninggalkan median 85425 di state global -- itu membuat
+        # `tests/test_bugfixes.py` gagal di runner `unittest` dengan
+        # "harga 60000 menyimpang 29.763% dari median 85425".
+        self._price_ctx = market_price(
+            "BTC/USDT:USDT", 85000.0 * 1.005)
+        self._price_ctx.__enter__()
 
     async def _seed_paper(self):
         await self.db.execute(
@@ -181,14 +187,15 @@ class BreakevenLiveTestBase(unittest.IsolatedAsyncioTestCase):
              1900.0, 2100.0, "OPEN", "paper"))
         await self.db.commit()
 
-        from core.market_store import market_store
-
-        market_store.set_price("ETH/USDT:USDT", 2000.0 * 1.005)
+        self._eth_price_ctx = market_price(
+            "ETH/USDT:USDT", 2000.0 * 1.005)
+        self._eth_price_ctx.__enter__()
 
     async def asyncTearDown(self):
-        from core.market_store import market_store
-
-        market_store.set_price("BTC/USDT:USDT", 0.0)
+        for ctx in (getattr(self, "_eth_price_ctx", None),
+                    getattr(self, "_price_ctx", None)):
+            if ctx is not None:
+                ctx.__exit__(None, None, None)
         await self.db.close()
 
 
