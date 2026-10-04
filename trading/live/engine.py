@@ -309,7 +309,7 @@ class LiveEngine:
     #: dua kali (PnL dobel, daily-loss breaker terpakai dua kali).
     _seen_fill_ids: set = field(default_factory=set)
 
-    #: Callback yangdipanggil setiap `poll_exchange_fills()` menemukan fill
+    #: Callback yang dipanggil setiap `poll_exchange_fills()` menemukan fill
     #: CLOSE. `run.py::_build_live_executor` menyetelnya ke
     #: `LiveExecutor.record_exchange_fills` supaya fill yang sudah dibaca
     #: benar-benar sampai ke SQLite dan ke daily-loss breaker.
@@ -317,6 +317,20 @@ class LiveEngine:
     #: Dipisah dari `poll_exchange_fills` dengan alasan: engine tidak boleh
     #: tahu soal database. Yang tahu soal ledger adalah executor.
     on_exchange_fill: Optional[Callable[[List[Dict[str, Any]]], Any]] = None
+
+    #: Client order id yang sudah dikirim tapi status akhirnya tidak
+    #: diketahui -- respons hilang karena timeout, atau exception setelah
+    #: order dikirim.
+    #:
+    #: Ini satu-satunya pencatatan yang bisa dilakukan untuk order
+    #: seperti itu. Bursa TIDAK menyediakan lookup order by cloid
+    #: (`orderStatus` hanya menerima `oid` numerik; cloid menghasilkan
+    #: HTTP 422), jadi bot tidak bisa menanyakan "apakah order ini
+    #: masuk?". Yang bisa dilakukan hanya mencatat bahwa ada order
+    #: yang tidak diketahui, lalu membiarkannya terlihat.
+    #:
+    #: Peta: cloid -> dict berisi coin, symbol, ukuran, dan waktu kirim.
+    uncertain_orders: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # ── Rekonsiliasi ───────────────────────────────────────────────────
 
@@ -524,6 +538,44 @@ class LiveEngine:
                 cloid=cloid,
             )
 
+        # Order yang sudah dikirim dengan cloid ini TIDAK boleh dikirim
+        # lagi.
+        #
+        # Ini satu-satunya guarantee idempotensi yang benar-benar ada.
+        # Bursa tidak menyediakan lookup order by cloid (`orderStatus`
+        # hanya menerima `oid` numerik; cloid menghasilkan HTTP 422),
+        # jadi saat respons hilang kita tidak bisa menanyakan "apakah
+        # order saya sudah masuk?". Yang bisa dilakukan hanya satu:
+        # tidak mengirim apa pun untuk identitas yang sama.
+        #
+        # Tanpa cek ini, timeout -> retry berubah menjadi dua order untuk
+        # satu posisi: posisi tergandakan, dua pasang SL/TP, dan DB
+        # yang hanya mencatat satu.
+        if cloid is not None and cloid in self.uncertain_orders:
+            prior = self.uncertain_orders[cloid]
+            logger.error(
+                "ORDER TIDAK DIKIRIM: cloid %s sudah dipakai untuk order %s "
+                "%s yang statusnya tidak diketahui (%s). Order ulang tidak "
+                "boleh dikirim karena posisinya mungkin sudah masuk di "
+                "bursa. Periksa lewat oid kalau ada: oid=%s.",
+                cloid, prior.get("coin"), prior.get("symbol"),
+                prior.get("reason"), prior.get("oid"),
+            )
+            return {
+                "success": False,
+                "uncertain": True,
+                "cloid": cloid,
+                "known": dict(prior),
+                "blockers": ["cloid_already_sent"],
+                "message": (
+                    "status order tidak diketahui (uncertain): order dengan "
+                    "cloid %s sudah dikirim sebelumnya (%s). Tidak dikirim "
+                    "ulang supaya posisi tidak tergandakan. Periksa "
+                    "frontendOpenOrders dan historicalOrders di bursa."
+                    % (cloid, prior.get("reason"))
+                ),
+            }
+
         # Leverage WAJIB sudah benar sebelum order dikirim. Kalau dipasang
         # sesudahnya, order pertama memakai leverage DEFAULT bursa, yang bisa
         # jauh lebih tinggi dari yang bot kira. Itu selisih antara rugi 1%
@@ -544,16 +596,39 @@ class LiveEngine:
         try:
             outcome: OrderOutcome = await asyncio.to_thread(send)
         except Exception as exc:  # noqa: BLE001
+            # Order sudah DIKIRIM ke bursa; yang hilang hanya responsnya.
+            # Kalau di sini dicatat sebagai error biasa lalu diulang, posisi
+            # tergandakan. Yang bisa dilakukan adalah mencatat cloid-nya
+            # sebagai order yang statusnya tidak diketahui.
+            if cloid is not None:
+                self._mark_uncertain(
+                    cloid, coin, symbol, size, price, is_close,
+                    reason=f"exception saat kirim: {type(exc).__name__}",
+                )
             self.gate.record_error()
             return {
                 "success": False,
-                "message": self.gate.redact(f"exception saat kirim: {exc}"),
+                "uncertain": cloid is not None,
+                "cloid": cloid,
+                "message": self.gate.redact(
+                    f"exception saat kirim: {exc}"
+                    + ("" if cloid is None else
+                       f" (cloid {cloid} tercatat sebagai order yang "
+                       f"statusnya tidak diketahui; jangan kirim ulang "
+                       f"dengan cloid ini)")
+                ),
             }
 
         if not outcome.ok:
+            # Penolakan bursa yang EKSPLISIT bukan order yang statusnya
+            # tidak diketahui: bursa menjawab, dan jawabannya "tidak".
+            # cloid sengaja tidak dicatat supaya order dengan cloid baru
+            # tetap boleh dikirim.
             self.gate.record_error()
             return {
                 "success": False,
+                "uncertain": False,
+                "cloid": cloid,
                 "message": self.gate.redact(str(outcome.error)),
             }
 
@@ -651,6 +726,42 @@ class LiveEngine:
             "requested_size": size,
             "filled_size": outcome.filled_size,
         }
+
+    def _mark_uncertain(
+        self,
+        cloid: Any,
+        coin: str,
+        symbol: str,
+        size: float,
+        price: float,
+        is_close: bool,
+        reason: str,
+    ) -> None:
+        """
+        Catat order yang sudah dikirim tapi statusnya tidak diketahui.
+
+        Bursa tidak bisa ditanya: `orderStatus` hanya menerima `oid`
+        numerik, dan `oid` justru yang hilang saat respons hilang. Yang
+        tersisa adalah mencatat identitas order itu supaya tidak
+        terkirim ulang dan tidak hilang begitu saja saat restart.
+        """
+        self.uncertain_orders[str(cloid)] = {
+            "cloid": str(cloid),
+            "coin": coin,
+            "symbol": symbol,
+            "size": size,
+            "price": price,
+            "is_close": is_close,
+            "reason": reason,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        }
+        logger.error(
+            "ORDER TIDAK PASTI untuk %s: cloid %s sudah dikirim ke bursa "
+            "tapi responsnya hilang (%s). Posisi untuk order ini tidak "
+            "boleh diasumsikan tidak ada -- cek frontendOpenOrders dan "
+            "historicalOrders di bursa. cloid ini tidak boleh dipakai ulang.",
+            symbol, cloid, reason,
+        )
 
     async def _cancel_open_remainder(
         self, coin: str, symbol: str, requested: float, outcome,

@@ -526,6 +526,31 @@ class LiveExchange:
     def cancel(self, coin: str, oid: int) -> Any:
         return self.exchange.cancel(coin, oid)
 
+    def cancel_by_cloid(self, coin: str, cloid: Any) -> Any:
+        """
+        Batalkan satu order lewat client order id-nya.
+
+        `cancel(coin, oid)` tidak bisa dipakai di jalur timeout: `oid`
+        justru informasi yang hilang saat respons hilang. cloid adalah
+        satu-satunya identitas order yang kita tetapkan SEBELUM
+        mengirim, jadi ini satu-satunya pembatalan yang mungkin dilakukan
+        tanpa mengetahui apa pun soal bursa.
+
+        Bursa tidak menyediakan lookup by cloid -- `cancel_by_cloid` ini
+        action L1 yang membatalkan, bukan query. Kalau order ternyata
+        sudah terisi, pembatalan tidak akan mengembalikannya.
+        """
+        return self.exchange.cancel_by_cloid(coin, to_cloid(cloid))
+
+    def order_status(self, coin: str, oid: int) -> Dict[str, Any]:
+        """
+        Status satu order lewat `oid`.
+
+        Hanya menerima `oid` numerik. Bentuk lain -- termasuk cloid --
+        ditolak bursa dengan HTTP 422, jadi jangan dicoba.
+        """
+        return self.info.query_order_by_oid(self.query_address, int(oid))
+
     def mid_price(self, coin: str) -> float:
         """
         Harga mid terkini untuk satu koin.
