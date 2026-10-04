@@ -231,6 +231,12 @@ class TestPartialFillProtection(unittest.IsolatedAsyncioTestCase):
         Kalau tidak, ada posisi terbuka tanpa SL yang tidak akan pernah
         hilang -- bot sudah attaching proteksi ke ukuran yang terisi dan
         menganggap order selesai.
+
+        OID yang DIBATALKAN ikut diperiksa, bukan hanya bahwa
+        `cancel()` dipanggil. Versi lama hanya mengecek `ex.canceled`
+        tidak kosong, dan mutasi "panggil pembatalan tapi abaikan
+        hasilnya" lolos: yang penting ada PANGGILAN, bukan bahwa
+        order yang benar-benar dibatalkan.
         """
         outcome = OrderOutcome(ok=True, filled_size=0.0003,
                                avg_price=85134.0, order_id=4242)
@@ -238,11 +244,34 @@ class TestPartialFillProtection(unittest.IsolatedAsyncioTestCase):
                        coin="BTC", sz="0.0007", origSz="0.001")
         ex, result = await self._submit(outcome, [resting], [])
 
+        self.assertEqual(
+            ex.canceled, [("BTC", resting["oid"])],
+            "sisa order harus dibatalkan lewat oid-nya. Yang dibatalkan: "
+            "%r (order resting yang sah adalah oid=%r)"
+            % (ex.canceled, resting["oid"]),
+        )
+
+    async def test_remainder_flag_is_reflected_in_the_result(self):
+        """
+        Hasil order harus menyatakan bahwa sisa dibatalkan.
+
+        `executor._persist_open` membaca flag ini; kalau tidak, partial
+        fill terlihat sama dengan fill penuh di ledger.
+        """
+        outcome = OrderOutcome(ok=True, filled_size=0.0003,
+                               avg_price=85134.0, order_id=4242)
+        resting = dict(OPEN_ORDER_PARTIALLY_FILLED,
+                       coin="BTC", sz="0.0007", origSz="0.001")
+        _ex, result = await self._submit(outcome, [resting], [])
+
         self.assertTrue(
-            ex.canceled,
-            "sisa order partial harus dibatalkan; yang dibatalkan: %r "
-            "(fill 0.0012 dari 0.004 -> sisa 0.0028 masih resting)"
-            % ex.canceled,
+            result.get("partial"),
+            "result harus melaporkan partial fill dan pembatalan sisa; "
+            "dapat: %r" % result,
+        )
+        self.assertGreater(
+            float(result.get("filled_size") or 0.0), 0.0,
+            "filled_size harus isi fill sebenarnya, bukan 0",
         )
 
     async def test_partial_fill_is_reported_in_message(self):
