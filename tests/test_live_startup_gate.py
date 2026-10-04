@@ -41,11 +41,15 @@ stub-nya memanggil stub lain.
 import asyncio
 import io
 import os
+import pathlib
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+from core.config import LiveConfig
 from trading.live.client import PreflightError
+from trading.live.safety import SafetyGate
 
 # Dummy 32 byte. Tidak pernah men-sign apa pun: test ini berhenti di
 # preflight, sebelum ada order yang mungkin dikirim.
@@ -69,6 +73,32 @@ class _DeadInfoFactory:
 
     def user_state(self, user, dex=""):
         raise AssertionError("preflight tidak boleh query posisi")
+
+
+def _isolated_gate_patch():
+    """
+    Arahkan `SafetyGate` ke file state di TEMP.
+
+    `_build_live_executor()` membangun `SafetyGate(live_cfg)` dengan
+    `state_path` default, yaitu `data_store/live_counters.json`. Tanpa ini,
+    test ini menulis ke file kill switch produksi — dan saat mutan
+    "preflight dihapus" diuji, engine sungguhan sempat jalan sehingga
+    `engaged: true` tersimpan ke sana.
+
+    Kill switch yang ditulis test adalah kill switch palsu: operator
+    membuka bot lalu menemukannya aktif tanpa sebab.
+
+    `trading.live.safety.SafetyGate` yang dipatch, bukan yang diimpor di
+    sini — supaya yang diganti adalah yang benar-benar dipanggil `run.py`.
+    """
+    state = pathlib.Path(tempfile.mkdtemp()) / "counters.json"
+
+    def _make(*args, **kwargs):
+        kwargs.setdefault("env", {})
+        kwargs["state_path"] = state
+        return SafetyGate(*args, **kwargs)
+
+    return patch("trading.live.safety.SafetyGate", side_effect=_make)
 
 
 def _app(mode="testnet"):
@@ -96,9 +126,11 @@ class TestStartupStopsWhenExchangeUnreachable(unittest.TestCase):
         import run
 
         app = app or _app()
-        with patch.dict(os.environ, {KEY_ENV: DUMMY_KEY}, clear=False):
+        env = {KEY_ENV: DUMMY_KEY}
+        with patch.dict(os.environ, env, clear=False):
             os.environ.pop("HYPERLIQUID_ACCOUNT_ADDRESS", None)
-            with patch("hyperliquid.info.Info", _DeadInfoFactory):
+            with patch("hyperliquid.info.Info", _DeadInfoFactory), \
+                 _isolated_gate_patch():
                 asyncio.run(
                     run.TradingBotApp._build_live_executor(app)
                 )
@@ -130,7 +162,8 @@ class TestStartupStopsWhenExchangeUnreachable(unittest.TestCase):
         with patch.dict(os.environ, {KEY_ENV: DUMMY_KEY}, clear=False):
             os.environ.pop("HYPERLIQUID_ACCOUNT_ADDRESS", None)
             with patch("hyperliquid.info.Info", _DeadInfoFactory), \
-                 patch.object(engine_mod, "LiveEngine", _Tripwire):
+                 patch.object(engine_mod, "LiveEngine", _Tripwire), \
+                 _isolated_gate_patch():
                 with self.assertRaises(PreflightError):
                     asyncio.run(
                         run.TradingBotApp._build_live_executor(_app()))
