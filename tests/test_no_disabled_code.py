@@ -69,19 +69,25 @@ def _constant_conditions(tree):
     kode: ia terlihat seperti cabang yang bisa gagal, padahal tidak
     pernah. Keduanya layak menggagalkan commit.
 
+    Angka dan `None` ikut dipindai karena secara fungsional sama:
+    `if 1:` adalah `if True:`, dan `if 0:` adalah `if False:`. Tidak ada
+    satu pun kondisi seperti itu di produksi saat pagar ini ditulis
+    (dicek dengan AST ke seluruh `trading/` dan `run.py`), jadi tidak
+    ada false positive yang harus dikecualikan.
+
     `while True:` TIDAK dipindai — itu pola loop yang sah.
     """
     for node in ast.walk(tree):
         if not isinstance(node, ast.If):
             continue
         test = node.test
-        if isinstance(test, ast.Constant) and isinstance(test.value, bool):
+        if isinstance(test, ast.Constant):
+            # `None` sebagai kondisi `if` juga selalu konstan.
             yield node.lineno, repr(test.value)
             continue
         # `if not False:` setara dengan `if True:`.
         if (isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
-                and isinstance(test.operand, ast.Constant)
-                and isinstance(test.operand.value, bool)):
+                and isinstance(test.operand, ast.Constant)):
             yield node.lineno, "not %s" % (test.operand.value,)
 
 
@@ -117,11 +123,21 @@ class TestNoConstantIfConditions(unittest.TestCase):
         self.assertEqual(list(_constant_conditions(good)), [])
 
         for snippet in ("if False:\n    pass\n", "if True:\n    pass\n",
-                        "if not False:\n    pass\n"):
+                        "if not False:\n    pass\n", "if 0:\n    pass\n",
+                        "if 1:\n    pass\n", "if None:\n    pass\n"):
             with self.subTest(snippet=snippet):
                 found = list(_constant_conditions(ast.parse(snippet)))
                 self.assertEqual(len(found), 1,
                                  "pemindai gagal menangkap %r" % snippet)
+
+        # Konstanta di dalam perbandingan tetap sah: `if x > 1:` dan
+        # `if n == 1:` bukan kondisi konstan.
+        for snippet in ("if x > 1:\n    pass\n", "if n == 1:\n    pass\n",
+                        "if flag:\n    pass\n"):
+            with self.subTest(snippet=snippet):
+                self.assertEqual(
+                    list(_constant_conditions(ast.parse(snippet))), [],
+                    "pemindai terlalu agresif pada %r" % snippet)
 
         # Loop `while True:` adalah pola sah dan tidak boleh kena.
         loop = ast.parse("while True:\n    pass\n")
