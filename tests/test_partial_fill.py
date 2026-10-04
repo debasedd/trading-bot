@@ -42,7 +42,7 @@ from hl_live_fixtures import (
     FIXTURE_ADDRESS,
     make_info_double,
 )
-from repro_helpers import clean_gate
+from repro_helpers import inside_trading_window
 
 from core.config import LiveConfig
 from trading.live.client import LiveExchange, OrderOutcome
@@ -197,7 +197,8 @@ class TestPartialFillProtection(unittest.IsolatedAsyncioTestCase):
         ex = make_exchange(
             order_outcome=outcome, open_orders=open_orders,
             held_positions=held_positions)
-        eng = LiveEngine(gate=clean_gate(), exchange=ex, cfg=LiveConfig())
+        eng = inside_trading_window()
+        eng.exchange = ex
         return ex, await eng.submit_order(
             "BTC", "BTC/USDT:USDT", True, 0.001, 85134.0,
             stop_loss=84000.0, take_profit=87000.0, leverage=5,

@@ -75,3 +75,37 @@ def clean_gate(cfg=None, **overrides):
 def make_gate_for_test(**cfg_overrides):
     """Alias yang lebih pendek; sama dengan clean_gate()."""
     return clean_gate(**cfg_overrides)
+
+
+def inside_trading_window(cfg=None):
+    """
+    LiveEngine dengan jam yang DIKENDALIKAN, untuk test yang memakai
+    jalur order.
+
+    `SafetyGate.master_blockers` menolak order di luar
+    `cfg.live_window_utc`, yang di produksi adalah (13, 23) UTC. Test
+    yang mengirim order lalu mengasumsikan order itu terkirim akan
+    LULUS karena GERBANG menolak -- bukan karena perilaku yang diuji.
+
+    Ini bukan jebakan hipotetis: `tests/test_partial_fill.py` sudah
+    Ini bukan jebakan hipotetis: `tests/test_partial_fill.py` gagal
+    pada pukul 06:18 UTC dengan pesan `di luar jendela waktu
+    Test yang hanya hijau sebagian hari bukan bukti apa pun.
+
+    Jendela dibuat (0, 24) supaya tidak pernah menutup. Sisa gerbang
+    -- notional, collateral, leverage, kill switch, daily loss -- tetap
+    yang sebenarnya diuji.
+    """
+    from datetime import datetime, timezone
+
+    from trading.live.engine import LiveEngine
+
+    cfg = cfg or LiveConfig()
+    cfg.live_window_utc = (0, 24)
+    eng = LiveEngine(
+        gate=clean_gate(cfg),
+        exchange=None,
+        cfg=cfg,
+    )
+    eng.now_fn = lambda: datetime(2026, 10, 4, 15, 0, tzinfo=timezone.utc)
+    return eng
