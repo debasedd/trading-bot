@@ -270,6 +270,31 @@ def _close_reason_from_fill(fill: Dict[str, Any]) -> str:
     return "EXCHANGE_FILL"
 
 
+class UnverifiableAccount(RuntimeError):
+    """
+    Respons bursa tidak bisa dipercaya sebagai "tidak ada posisi".
+
+    Berbeda dari exception lain di modul ini: ini BUKAN kegagalan jaringan
+    dan BUKAN divergensi posisi. Bursa menjawab, bentuk jawabannya seperti
+    akun, tapi isinya kosong atau tidak lengkap.
+
+    Dipisah sebagai tipe sendiri supaya pemanggil bisa membedakan:
+      * `UnverifiableAccount` -> buta, tidak boleh beraksi
+      * reconcile sukses      -> datar, dan itu beres
+
+    `code` ada supaya test bisa mengunci cabang mana yang menyala tanpa
+    bergantung pada teks pesan.
+    """
+
+    # Kontrak: renamed = test gagal.
+    EMPTY_ACCOUNT = "empty_account"
+    MALFORMED = "malformed_state"
+
+    def __init__(self, message: str, code: str = EMPTY_ACCOUNT):
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass
 class LivePosition:
     """Posisi yang dicatat bot, selalu diverifikasi ulang ke bursa."""
@@ -346,8 +371,36 @@ class LiveEngine:
         Yang otomatis hanyalah MENCATAT posisi yang ada di bursa tapi
         tidak kita ketahui. Posisi tanpa proteksi adalah bahaya terbesar,
         jadi perlakuan yang tidak simetris ini disengaja.
+
+        "TIDAK ADA POSISI" dan "TIDAK BISA MEMASTIKAN" ADALAH DUA HAL
+        BERBEDA
+        --------------------------------------------
+        `user_state()` untuk alamat yang bukan akun sungguhan
+        (mis. agent wallet yang dipakai sebagai alamat query) membalas
+        akun KOSONG tanpa error. Kalau respons kosong itu diperlakukan
+        sebagai "tidak ada posisi", bot menyimpulkan datar dan melepas
+        semua proteksi — padahal posisinya ada di wallet lain.
+
+        Dokumentasi Hyperliquid menyatakan ini eksplisit:
+
+            "To query the account data associated with a master or
+             sub-account, you must pass in the actual address of that
+             account. A common pitfall is to use the agent wallet's
+             address which leads to an empty result."
+
+        Jadi laporan selalu menyebut mana yang terjadi, lewat
+        `state_known`. False = tidak bisa memastikan, dan itu memicu
+        fail closed.
         """
-        remote = await asyncio.to_thread(self._fetch_remote_positions)
+        try:
+            remote = await asyncio.to_thread(self._fetch_remote_positions)
+            state_known = True
+            unreadable = None
+        except Exception as exc:  # noqa: BLE001
+            remote = []
+            state_known = False
+            unreadable = str(exc)
+
         remote_by_symbol = {p["symbol"]: p for p in remote}
 
         local_symbols = set(self.positions)
@@ -366,7 +419,33 @@ class LiveEngine:
             "only_remote": only_remote,
             "size_mismatch": size_mismatch,
             "matched": len(common),
+            # False = bursa dibaca tapi jawabannya tidak bisa dipercaya
+            # sebagai "datar". Lihat docstring.
+            "state_known": state_known,
         }
+
+        if unreadable is not None:
+            # BUKAN divergensi posisi. Bot tidak tahu apa pun soal posisi,
+            # jadi perlakuannya tidak boleh sama dengan "tidak ada posisi":
+            # yang pertama berarti buta, yang kedua berarti benar-benar datar.
+            logger.error(
+                "POSISI TIDAK BISA DIPASTIKIN: bursa tidak bisa dibaca (%s). "
+                "Ini BUKAN berarti tidak ada posisi — pasar buta adalah kondisi "
+                "yang lebih berbahaya daripada pasar yang sehat.",
+                unreadable,
+            )
+            self.gate.engage_kill_switch(
+                "reconcile: posisi tidak bisa dipastikan karena bursa "
+                "tidak terbaca ({})".format(unreadable))
+            report["problems"] = ["bursa tidak bisa dibaca"]
+            return report
+
+        if not state_known:  # pragma: no cover - jaga-jaga
+            logger.error("POSISI TIDAK BISA DIPASTIKIN (tanpa alasan tercatat)")
+            self.gate.engage_kill_switch(
+                "reconcile: posisi tidak bisa dipastikan")
+            report["problems"] = ["bursa tidak bisa dibaca"]
+            return report
 
         if only_local:
             logger.error(
@@ -402,11 +481,33 @@ class LiveEngine:
         `universe` untuk semua aset di setiap panggilan `info()`, jadi
         mengambilnya per-posisi berarti parse JSON payload penuh berulang
         kali untuk data yang tidak pernah berubah dalam satu reconcile.
+
+        RESPONS KOSONG DIANGGAP "TIDAK BISA MEMASTIKAN"
+        -----------------------------------------------
+        Bursa membalas akun kosong — bukan error — untuk alamat yang bukan
+        akun sungguhan. Alasan yang paling mungkin di sistem ini: alamat
+        query adalah signer (agent wallet), bukan master account tempat
+        posisi dipegang. Dokumentasinya:
+
+            "To query the account data associated with a master or
+             sub-account, you must pass in the actual address of that
+             account. A common pitfall is to use the agent wallet's
+             address which leads to an empty result."
+
+        Akun yang benar-benar datar TIDAK mungkin membalas seperti itu:
+        `marginSummary.accountValue` akan tetap memuat collateral. Jadi
+        "tidak ada posisi" yang nyata selalu detectable, dan yang tersisa
+        setelah pengecekan ini adalah ketiadaan akun.
+
+        Mengembalikan `[]` untuk kedua kasus itu akan membuat reconcile
+        melaporkan datar dan melanjutkan loop dengan keyakinan salah.
         """
         out: List[Dict[str, Any]] = []
         meta = self.exchange.info.meta()
         universe = meta.get("universe") or []
-        for asset in self.exchange.positions():
+        state = self.exchange.get_account_state()
+        self._require_real_account(state)
+        for asset in (state.get("assetPositions") or []):
             pos = asset.get("position") or {}
             size = float(pos.get("szi") or 0.0)
             if size == 0.0:
@@ -430,6 +531,68 @@ class LiveEngine:
                 "entry_price": float(pos.get("entryPx") or 0.0),
             })
         return out
+
+    @staticmethod
+    def _require_real_account(state: Dict[str, Any]) -> float:
+        """
+        Pastikan respons bursa berasal dari akun NYATA, bukan akun kosong.
+
+        Mengembalikan `accountValue`, atau melempar `UnverifiableAccount`.
+
+        Kenapa ini perlu
+        ---------------
+        `user_state()` untuk alamat yang tidak dikenal membalas objek
+        yang bentuknya mirip akun sungguhan tapi isinya kosong:
+
+            {"assetPositions": [], "marginSummary": {"accountValue": "0"},
+             "crossMarginSummary": ..., "withdrawable": "0"}
+
+        Dua-duanya menghasilkan `positions() == []`, jadi `reconcile()`
+        melaporkan "tidak ada posisi" dan bot melepas semua proteksi.
+
+        Yang membuat keduanya bisa dibedakan: akun sungguhan yang Datar
+        tetap punya collateral, jadi `accountValue` bukan nol. Akun yang
+        tidak ada membalas nol.
+
+        Ambang `accountValue == 0` dipilih karena:
+          * Nol itu mungkin secara teori (semua dana ditarik, akun baru),
+            tapi pada kasus itu tidak ada posisi untuk dilindungi, dan
+            operator yang melihat kill switch menyala akan cenderung
+            benar: dia memang perlu memeriksa akunnya.
+          * Menolak `accountValue` kecil yang bukan nol akan menolak akun
+            dust yang sah, dan penolakan palsu lebih buruk daripada
+            penolakan yang benar.
+        """
+        if not isinstance(state, dict):
+            raise UnverifiableAccount(
+                "respons bursa bukan objek: %s" % type(state).__name__,
+                UnverifiableAccount.MALFORMED)
+
+        summary = state.get("marginSummary")
+        if not isinstance(summary, dict) or "accountValue" not in summary:
+            raise UnverifiableAccount(
+                "respons bursa tidak punya marginSummary.accountValue — "
+                "bentuk ini bukan akun sungguhan",
+                UnverifiableAccount.MALFORMED)
+
+        raw = summary.get("accountValue")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise UnverifiableAccount(
+                "accountValue bukan angka: %r" % (raw,),
+                UnverifiableAccount.MALFORMED) from None
+
+        if value <= 0.0:
+            raise UnverifiableAccount(
+                "accountValue=%.6f — bursa membalas akun kosong. Dua "
+                "kemungkinan: alamat query bukan akun yang memegang "
+                "posisi (mis. signer/agent wallet yang dipakai "
+                "sebagai alamat query), atau akunnya memang belum "
+                "punya dana. Bot tidak bisa membedakannya dari "
+                "respons ini, jadi perlakuannya fail closed."
+                % value)
+        return value
 
     @staticmethod
     def _sizes_match(local: LivePosition, remote: Dict[str, Any]) -> bool:
