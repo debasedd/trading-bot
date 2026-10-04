@@ -37,6 +37,50 @@ except ImportError:  # pragma: no cover
 logger = get_logger("live_client")
 
 
+class PreflightError(RuntimeError):
+    """
+    Kegagalan preflight. Bot TIDAK boleh start kalau ini muncul.
+
+    Subkelas `RuntimeError` bukan gaya: `run.py` sudah menangkap
+    `RuntimeError` di titik masuk dan keluar dengan kode 2 plus pesan yang
+    bisa dibaca operator. Preflight yang melempar exception lain akan
+    lolos sebagai traceback mentah, dan pesan yang hilang di titik yang
+    paling butuh pesan adalah kegagalan boot.
+
+    `code` ada supaya test bisa mengunci CABANG yang salah tanpa
+    bergantung pada teks pesan. Assert `code`, bukan `assertIn` pada
+    string: dua cabang yang kebetulan berbagi kata yang sama akan saling
+    menyelamatkan, dan test jadi hijau karena alasan salah -- persis yang
+    terjadi di `fase-1-partial.md` §5.2.
+    """
+
+    # Kode stabil. Perlakukan sebagai kontrak: renamed = test gagal.
+    EXCHANGE_UNREACHABLE = "exchange_unreachable"
+    UNIVERSE_EMPTY = "universe_empty"
+    BAD_ADDRESS = "bad_address"
+    SIGNER_MISMATCH = "signer_mismatch"
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def mask_address(value: Optional[str]) -> str:
+    """
+    Bentuk aman untuk dicetak: `0x5972…0417`.
+
+    Alamat penuh tidak dibutuhkan untuk diagnosis, tapi log sering dibaca
+    orang yang tidak berhak atas akun tersebut, dan log biasa ditempel di
+    issue. Private key tidak pernah masuk ke sini karena bentuknya 32 byte
+    dan tidak pernah dialirkan ke logging mana pun di jalur live.
+    """
+    if not isinstance(value, str):
+        return "<bukan string>"
+    if len(value) < 10:
+        return "<terlalu pendek>"
+    return value[:6] + "…" + value[-4:]
+
+
 @dataclass
 class OrderOutcome:
     """
@@ -373,6 +417,111 @@ class LiveExchange:
         return self.info.frontend_open_orders(self.query_address)
 
     # ------------------------------------------------------------------ tick
+
+    def preflight(self, allow_api_wallet: bool = False) -> None:
+        """
+        Pastikan bursa hidup dan kredensial benar SEBELUM order pertama.
+
+        Kenapa ini wajib: `Info` dibangun lazy (lihat properti `info`),
+        jadi `LiveExchange(...)` sendiri tidak lagi menyentuh jaringan.
+        Bot bisa start di mesin yang tidak punya koneksi sama sekali dan
+        baru gagal — atau lebih buruk, baru tahu posisinya salah — saat
+        order pertama dikirim.
+
+        Yang diperiksa, semuanya HANYA membaca:
+
+        1. **Konektivitas.** `info.meta()` adalah satu call paling murah
+           yang benar-benar ke bursa. Kalau gagal, bot tidak tahu posisi
+           sendiri, dan ketidaktahuan itu harus menghentikan boot.
+        2. **`account_address` bentuknya alamat.** Alamat salah bentuk
+           tidak menghasilkan error dari bursa — `user_state()` untuk
+           string bukan-alamat mengembalikan akun kosong. Bot akan
+           menyimpulkan "tidak ada posisi" padahal posisinya ada.
+        3. **Signer vs query address.** Kalau berbeda, ini HANYA sah
+           kalau operator menyatakannya lewat `allow_api_wallet=True`.
+           Tanpa itu, key typo (`...ab` vs `...ba`) menghasilkan wallet
+           yang tidak pernah menandatangani ke bursa sungguhan, dan itu
+           baru ketahuan saat order hilang.
+
+        Melempar `PreflightError` dengan `code` yang menunjuk CABANG mana
+        yang gagal, bukan `NetworkAccessDenied` dari socket guard test —
+        di produksi tidak ada guard, jadi pesannya harus berdiri sendiri.
+
+        TIDAK mengirim order. `meta()` dan validasi bentuk alamat adalah
+        satu-satunya operasi yang dipanggil.
+        """
+        # 1. Konektivitas + 2. Bentuk universe.
+        try:
+            meta = self.info.meta() or {}
+        except Exception as exc:  # noqa: BLE001
+            raise PreflightError(
+                PreflightError.EXCHANGE_UNREACHABLE,
+                "Bursa Hyperliquid tidak bisa dibaca ({}). Bot tidak "
+                "tahu posisi sebenarnya, jadi live tidak dijalankan. "
+                "Periksa koneksi, base_url, dan proxy bila ada."
+                .format(type(exc).__name__)
+            ) from exc
+
+        universe = meta.get("universe") or []
+        if not universe:
+            raise PreflightError(
+                PreflightError.UNIVERSE_EMPTY,
+                "Bursa menjawab tapi `universe` kosong. Meta yang tidak "
+                "lengkap berarti aturan presisi aset tidak diketahui, dan "
+                "size yang tidak sesuai aturan bursa ditolak tanpa pesan "
+                "yang menyebut angkanya."
+            )
+
+        # 3. Bentuk alamat yang benar-benar dipakai untuk query.
+        #
+        # `account_address=None` itu KASUS VALID: `__init__` sudah
+        # fallback ke alamat penanda tangan, dan `query_address` berisi
+        # alamat itu. Yang di sini bukan "harus selalu diisi", tapi
+        # "kalau diisi, harus berbentuk alamat" — kalau tidak, bursa
+        # membalas akun kosong tanpa error.
+        for label, value in (
+            ("account_address", self._account_address),
+            ("query_address", self.query_address),
+        ):
+            if value is None:
+                continue
+            if not self._is_address(value):
+                raise PreflightError(
+                    PreflightError.BAD_ADDRESS,
+                    "{}={} bukan alamat Ethereum (0x + 40 hex). Bursa "
+                    "tidak akan menolak ini dengan error — dia akan "
+                    "membalas akun kosong, jadi bot menyimpulkan tidak ada "
+                    "posisi padahal ada.".format(label, mask_address(value))
+                )
+
+        # 4. Signer vs query.
+        if self._account_address and \
+                self._account_address.lower() != self.address.lower() \
+                and not allow_api_wallet:
+            raise PreflightError(
+                PreflightError.SIGNER_MISMATCH,
+                "Signer ({}) berbeda dari account_address ({}). Pola ini "
+                "hanya sah untuk API wallet, dan kalau salah ketik dia "
+                "membaca akun yang tidak memegang posisi. Kalau memang "
+                "memakai API wallet, teruskan allow_api_wallet=True."
+                .format(mask_address(self.address),
+                        mask_address(self._account_address))
+            )
+
+        logger.info(
+            "Preflight OK: %d aset, query %s", len(universe),
+            mask_address(self.query_address),
+        )
+
+    @staticmethod
+    def _is_address(value: Optional[str]) -> bool:
+        """True kalau `value` adalah alamat Ethereum: 0x + 40 hex."""
+        if not isinstance(value, str):
+            return False
+        v = value.strip()
+        if len(v) != 42 or not v.startswith("0x"):
+            return False
+        return all(ch in "0123456789abcdefABCDEF" for ch in v[2:])
 
     def asset_rules(self) -> Dict[str, Dict[str, Any]]:
         """

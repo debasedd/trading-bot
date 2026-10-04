@@ -302,7 +302,7 @@ class TradingBotApp:
         import os
 
         from core.config import LiveConfig
-        from trading.live.client import LiveExchange
+        from trading.live.client import LiveExchange, mask_address
         from trading.live.engine import LiveEngine
         from trading.live.executor import LiveExecutor
         from trading.live.safety import SafetyGate
@@ -321,6 +321,16 @@ class TradingBotApp:
         gate = SafetyGate(live_cfg)
         exchange = LiveExchange(key, testnet=testnet,
                                 account_address=api_wallet)
+        # Preflight SEBELUM LiveEngine dibuat. `Info` dibangun lazy sejak
+        # `c224b58`, jadi constructing `LiveExchange` tidak lagi menyentuh
+        # jaringan — tanpa cek ini, bot bisa start di mesin yang tidak punya
+        # koneksi dan baru gagal (atau lebih buruk, salah baca posisi) saat
+        # order pertama.
+        #
+        # `allow_api_wallet` hanya menyala kalau operator memang memakai
+        # pemisahan wallet. Tanpa itu, signer yang berbeda dari query
+        # address dianggap salah ketik — dan memang harus.
+        exchange.preflight(allow_api_wallet=bool(api_wallet))
         engine = LiveEngine(gate=gate, exchange=exchange, cfg=live_cfg)
 
         health = await engine.health_check()
@@ -330,7 +340,7 @@ class TradingBotApp:
                 + "; ".join(health["problems"][:3]))
 
         logger.info("Live siap: %s @ %s (%d aset)",
-                    exchange.query_address, exchange.base_url,
+                    mask_address(exchange.query_address), exchange.base_url,
                     len(exchange.asset_rules()))
 
         async def _decide():
@@ -1089,11 +1099,30 @@ async def main():
         await app.shutdown()
 
 
-if __name__ == "__main__":
-    # Mode satu kali: `python run.py --repair-candles` membersihkan tabel candles
-    # lalu keluar, tanpa menjalankan agen atau dashboard. Tidak ada menu mode
-    # di sini — perintah ini tidak pernah bertransaksi sama sekali.
-    if "--repair-candles" in sys.argv:
+def _cli(argv=None) -> int:
+    """
+    Titik masuk proses. Mengembalikan KODE KELUAR.
+
+    Dipisah dari blok `if __name__ == "__main__"` supaya kontraknya bisa
+    diuji: "gagal konfigurasi live berhenti dengan kode 2" adalah
+    Pernyataan "gagal konfigurasi live berhenti dengan kode 2" adalah
+    pernyataan tentang PERILAKU, dan membuktikannya lewat
+    `inspect.getsource` hanya membuktikan bahwa teks tertentu ada di file.
+    Test yang begitu tetap hijau kalau pemanggilnya dibungkus `except`
+    yang menelan exception, atau kalau exception-nya dilempar di jalur
+    kode yang tidak pernah dieksekusi.
+
+    Kode keluar:
+      0 — bot selesai normal, atau KeyboardInterrupt.
+      2 — konfigurasi/jalur live tidak memenuhi syarat. Pesan dicetak
+          lewat `_print_safe` supaya tidak ikut crash di Windows cp1252.
+    """
+    argv = sys.argv if argv is None else argv
+
+    # Mode sekali: `python run.py --repair-candles` membersihkan tabel
+    # candles lalu keluar, tanpa menjalankan agen atau dashboard. Tidak ada
+    # menu mode di sini — perintah ini tidak pernah bertransaksi sama sekali.
+    if "--repair-candles" in argv:
         async def _repair():
             setup_logger()
             app = TradingBotApp()
@@ -1101,16 +1130,16 @@ if __name__ == "__main__":
             await app.repair_candles()
 
         asyncio.run(_repair())
-        sys.exit(0)
+        return 0
 
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        return 0
     except RuntimeError as exc:
-        # Kegagalan konfigurasi live (kunci privat kosong, health check
-        # gagal saat start) dilempar sebagai RuntimeError dengan pesan yang
-        # bisa dibaca operator.
+        # Kegagalan konfigurasi live (kunci privat kosong, preflight
+        # gagal, health check gagal saat start) dilempar sebagai
+        # RuntimeError dengan pesan yang bisa dibaca operator.
         #
         # Tanpa blok ini, operator hanya melihat traceback Python --
         # yang tidak menjelaskan apakah ini masalah konfigurasi atau
@@ -1121,4 +1150,9 @@ if __name__ == "__main__":
         _print_safe("  BOT TIDAK DIJALANKAN.")
         _print_safe("  Alasan: {}".format(exc))
         _print_safe("")
-        sys.exit(2)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli())
