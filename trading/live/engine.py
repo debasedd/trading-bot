@@ -802,7 +802,7 @@ class LiveEngine:
             # HANYA lupakan posisi kalau bursa benar-benar mengisinya.
             #
             # `outcome.ok` berarti order terkirim, bukan order terisi. Order
-            # limit GTC yangтонусeng di harga yang tidak pernah tercapai akan
+            # limit GTC yang resting di harga yang tidak pernah tercapai akan
             # tetap `ok` selamanya, dan tanpa cek ini bot menganggap posisi
             # sudah tertutup sementara bursa masih memegangnya — persis
             # kebohongan yang paling merusak, karena kelihatannya benar di

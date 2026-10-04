@@ -45,7 +45,7 @@ Temuan yang mengubah gambaran ada di `docs/reports/fase-1-partial.md` §5.
 | (e) | breakeven live | selesai | `caa57b1` |
 | (f) | funding dari bursa | belum | — |
 | (g) | filter `mode='live'` | sebagian | — |
-| (h) | kill switch | **belum** | — |
+| (h) | kill switch | **sebagian** | `522d11c`–`ba581f4` |
 | (i) | shutdown order resting | belum | — |
 | (j) | arming CLI | belum | — |
 
@@ -68,8 +68,99 @@ mutation testing. Yang benar-benar masuk setelah `caa57b1` adalah:
 | `bae1c86` | preflight saat start (`PreflightError` per cabang) |
 | `600f97f` | test startup gate tidak menulis ke kill switch produksi |
 
-Jadi (h)–(j) **semua belum**. "Sedang dikerjakan" jangan dibaca sebagai
-sedikit selesai — tidak ada kode (h) yang ditulis.
+Jadi (h)–(j) **belum**. "Sedang dikerjakan" jangan dibaca sebagai sedikit
+selesai — tidak ada kode (h) yang ditulis.
+
+## Item (h) kill switch — SEBAGIAN
+
+Lima commit, masing-masing satu defect. Yang BELUM dikerjakan masih ada di
+§ Berikutnya.
+
+| Commit | Isi |
+|---|---|
+| `522d11c` | isolasi state test: fixture autouse + pagar `data_store/` |
+| `f891a0f` | fail closed: akun kosong bursa bukan "tidak ada posisi" |
+| `eba8473` | `FakeExchange` menyediakan respons akun berbentuk bursa |
+| `5652696` | verifikasi signer adalah agent wallet resmi dari master |
+| `ba581f4` | konstanta `SIGNER` semula tidak punya huruf (mutan selamat) |
+
+### "Tidak ada posisi" vs "tidak bisa memastikan"
+
+`_fetch_remote_positions()` memfilter `assetPositions` dengan `szi != 0`.
+Bursa membalas akun **kosong** — bukan error — untuk alamat yang bukan akun
+sungguhan, jadi hasilnya `positions() == []`, `healthy = True`, dan kill
+switch **tidak** menyala. Bot berjalan dengan keyakinan bahwa datar.
+
+Dokumentasi menyebut jebakan ini eksplisit, dan mudah terkena di sistem ini
+karena pemisahan wallet sudah dipakai: `query_address` bisa berupa agent
+wallet.
+
+Yang membuatnya dapat dibedakan: akun sungguhan yang Datar tetap punya
+collateral, jadi `marginSummary.accountValue` bukan nol. `_require_real_account()`
+menolaknya sebagai `empty_account` / `malformed_state`, dan `reconcile()`
+melaporkan `state_known=False` plus `problems`, lalu menyalakan kill switch.
+
+Kontrol yang menjaga ini tidak berubah jadi "selalu menolak": akun datar
+dengan collateral tetap hijau, dan akun dust (`accountValue` 0.01) diterima.
+
+### Verifikasi agent wallet
+
+`allow_api_wallet=True` menyatakan **niat**, bukan bukti. Dua kesalahan
+berbeda terlihat sama dari sisi bot: `account_address` salah ketik, atau
+signer tidak pernah didaftarkan sebagai agent. Kasus kedua tidak bisa
+dideteksi dari sisi bot — ordernya tidak pernah muncul di bursa, jadi
+rekonsiliasi juga tidak melihat apa-apa.
+
+`verify_agent_wallet()` memakai endpoint `extraAgents`
+(`POST /info {"type": "extraAgents", "user": <master>}`), bentuk respons
+diambil dari SDK resmi `Info.extra_agents`. Dicek terhadap **master**, bukan
+terhadap `query_address`. Signer == master dilewati.
+
+### Isolasi state test
+
+`_build_live_executor()` membangun `SafetyGate(live_cfg)` tanpa
+`state_path`, jadi jatuh ke default `data_store/live_counters.json` — file
+kill switch produksi. Test yang memanggilnya sungguhan menulis ke sana.
+Baru ketahuan saat bukti cabutan preflight: engine sempat jalan dan file itu
+muncul dengan `engaged: true`.
+
+- `isolate_state_paths` (autouse) — `os.chdir(tmp_path)` + pengalihan
+  handler log + folder temporer.
+- Baseline `data_store/` diambil di `pytest_sessionstart`, bukan di fixture.
+- `tests/test_state_isolation.py` membandingkan snapshot (ukuran + sha256)
+  sebelum dan sesudah suite.
+
+**Temuan kedua yang lebih luas:** pagar langsung melaporkan
+`logs/trading_bot.log` tumbuh 4.941.112 → 4.957.238 byte selama suite.
+`os.chdir` tidak menutupinya — `RotatingFileHandler` menyimpan
+`baseFilename` sebagai path absolut saat konstruksi dan tidak pernah membaca
+ulang config. Sudah dicoba mengubah `get_config().logging.file`: tidak
+berpengaruh. Yang benar: mengarahkan ulang handler yang sudah terpasang.
+
+`.gitignore` juga diperbaiki: `data_store/live_counters.json` sebelumnya
+TIDAK diabaikan dan tidak ter-track, jadi muncul sebagai `??` di setiap
+`git status` dan bisa ter-commit tanpa sengaja.
+
+### Mutasi yang selamat, dan apa yang memperbaikinya
+
+| Mutasi | Hasil |
+|---|---|
+| `_require_real_account()` tidak dipanggil | 7 failed |
+| `reconcile()` tidak engages kill switch saat tak terbaca | 1 failed |
+| `value <= 0` jadi `value < 0` | 2 failed |
+| `_redirect_log_handlers()` dimatikan | 1 failed |
+| cek agent dimatikan | 5 failed |
+| `extra_agents` dicek ke signer | 2 failed |
+| perbandingan agent jadi case-sensitive | **9 passed — SELAMAT** |
+
+Yang selamat itu karena `SIGNER` = `0x` + `"11"*20` — semua heksadesimal
+ANGKA, jadi `SIGNER.upper()` identik dengan `SIGNER`. Test
+case-insensitivity-nya hijau tanpa menguji apa pun. Setelah konstantanya
+punya huruf, mutannya terbunuh.
+
+Pola yang sama seperti `test_account_address_must_be_hex_address` yang hijau
+karena salah bercabang. Ditutup dengan
+`test_fixture_addresses_actually_exercise_case_folding`.
 
 **Gerbang 1:** test reproduksi hijau — **TERPENUHI** (0 xfailed).
 Chaos test dan smoke test testnet — **belum**, butuh testnet key.
@@ -466,32 +557,50 @@ hanya jalur `_build_live_executor()` yang menyentuhnya. Diperbaiki di
 
 ## Berikutnya
 
-Pencemar urutan acak dan isolate test sudah beres. Urutan berikutnya
-mengikuti urutan operator 2026-10-04.
+### URUTAN RESMI — operator 2026-10-04, tidak bisa diacak
 
-0. **Preflight saat start — SELESAI** (`bae1c86`, `600f97f`, `f922395`).
-   Lihat § Pagar kode yang dimatikan. Ini bukan item (a)–(j); ditemukan
-   saat audit working tree, bukan dari daftar operator.
-1. **Mutation testing (butir 11)** — environment siap, hasil run sudah
-   keluar. Lihat § Mutation testing. Inventarisasi mutan selamat di
-   `executor.py` (909) dan `position_manager.py` (314) belum — itu
-   pekerjaan tersendiri.
-2. **Test batas (butir 12)** — tepat di limit, sedikit di bawah/atas,
+1. **(h) kill switch** — **SEBAGIAN**, lihat § Item (h). Sisa lingkup yang
+   BELUM dikerjakan:
+   - satu sumber kebenaran untuk nilai `"off"` (sekarang ada dua tempat:
+     `SafetyGate.__init__` dan `master_blockers`).
+   - file state rusak/tak terbaca → `engaged` (fail closed). Sekarang
+     `DayCounters._unreadable` hanya menambah blocker `COUNTER_STATE_UNREADABLE`,
+     tidak menyalakan switch.
+   - file state belum ada HANYA dibuat lewat inisialisasi eksplisit — tidak
+     diam-diam oleh startup atau test.
+   - `disengage_kill_switch` hanya lewat perintah operator: konfirmasi ketik
+     + audit log. Sekarang juga bisa lewat env `TRADEBOT_LIVE_KILL_SWITCH=0`,
+     dan audit log-nya belum ada.
+   - kill switch hanya untuk divergensi NYATA — sudah sebagian lewat
+     `state_known`, tapi `health_check` masih menyalakannya untuk
+     "order resting tidak terbaca".
+2. **(g) sisa** — parameter `mode` di `get_daily_realized_pnl` dan semua
+   pemanggil `get_open_positions`. `close_position` sudah atomik
+   (`WHERE id = ? AND status = 'OPEN'` plus `commit()` dan `rowcount`), jadi
+   yang belum hanya pengembalian nilai.
+3. **Bursa tiruan stateful berbasis SDK** — lalu **mutmut ulang** untuk
+   `_persist_open`, `_close`, `_open`, `record_exchange_fills`. Aturan yang
+   berlaku:
+   - mutan selamat yang **bukan ekuivalen** ditutup dengan test baru.
+   - mutan yang diklaim ekuivalen harus **dijelaskan tertulis**, dan 10
+     contoh acak diberi diff lengkap — bukan klaim lisan.
+4. **(i) shutdown order resting.**
+5. **(f) funding dari bursa** — cek dokumentasi resmi dulu; syaratnya sudah
+   tertulis di § Syarat item (f).
+6. **(j) arming CLI.**
+
+### Pekerjaan lain yang masih terbuka
+
+1. **Test batas (butir 12)** — tepat di limit, sedikit di bawah/atas,
    pergantian hari UTC, state setelah restart. Untuk breaker, kill switch,
    dan partial fill. Bagian breaker sudah sebagian tertutup di `64acf92`.
-3. **Jam palsu di beberapa zona waktu (butir 5)** — jalankan suite dengan
-   jam dibekuka di beberapa jam UTC dan zona waktu.
-4. **(h) kill switch** sesuai lingkup operator butir 10. Belum ada kode
-   yang ditulis — lihat koreksi tabel status di atas.
-5. **(g) sisa:** parameter `mode` di `get_daily_realized_pnl` dan semua
-   pemanggil `get_open_positions`. Catatan: `close_position` ternyata
-   **sudah** atomik (`WHERE id = ? AND status = 'OPEN'` plus `commit()` dan
-   `rowcount`), jadi yang belum ada hanya pengembalian nilai.
-6. **Config di jalur risiko** — `position_manager.py:57` dan
+2. **Jam palsu di beberapa zona waktu (butir 5)** — jalankan suite dengan
+   jam dibekuka di beberapa jam UTC dan zona waktu. Belum.
+3. **Config di jalur risiko** — `position_manager.py:57` dan
    `paper_engine.py:93` masih baca `get_config()`. Lihat § Sisa pekerjaan.
-7. **(i) shutdown**, **(f) funding** — cek dokumentasi resmi lebih dulu
-   (syarat item (f) sudah ditulis), **(j) arming CLI**.
-8. Perbarui `docs/reports/fase-1-partial.md` setelah tiap item.
+4. **Zone waktu** dan bukti signing offline untuk cancel/modify masih
+   belum diuji (lihat § Tidak yakin).
+5. Perbarui `docs/reports/fase-1-partial.md` setelah tiap item.
 
 
 ### Sisa pekerjaan config di jalur risiko
