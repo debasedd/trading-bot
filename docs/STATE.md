@@ -279,11 +279,70 @@ Root cause kegagalannya sudah ditemukan dan diperbaiki, dan file itu tidak
 menyentuh satu pun baris yang dimutasi. Empat file lain butuh
 `pandas_ta` / `plotly` / `apscheduler` yang tidak dipasang.
 
-**Status hasil: belum ada.** Yang harus dilaporkan setelah run selesai:
-jumlah mutan per modul, mutan selamat per modul, dan klasifikasi tiap
-mutan selamat sebagai *equivalent* atau *celah test*. Semua mutan selamat
-di `safety.py` dan breaker ditutup dengan test baru atau penjelasan
-tertulis.
+### Hasil run pertama
+
+4076 mutan, **1739 selamat** (43%). Klasifikasi per modul:
+
+| Modul | Mutan | Selamat | Mati |
+|---|---|---|---|
+| `trading/live/executor.py` | 2126 | 996 | 1130 |
+| `trading/position_manager.py` | 788 | 292 | 496 |
+| `trading/live/safety.py` | 410 | 189 | 221 |
+| `trading/risk_manager.py` | 463 | 133 | 330 |
+| `trading/fill_cost.py` | 289 | 129 | 160 |
+| **TOTAL** | **4076** | **1739** | **2337** |
+
+Sebagian besar yang selamat **bukan** celah test. Tiga pola yang muncul saat
+diff-nya dibaca satu per satu:
+
+1. **Mutan string ke string mustahil.** `"true"` jadi `"XXtrueXX"`, `"BUY"`
+   jadi `"XXBUYXX"`. Env value dan label log tidak pernah bernilai itu.
+   Setara secara fungsional. Ini batas bawaan mutmut, bukan
+   kekurangan test.
+2. **Mutan threshold absurd.** `daily_pnl < 0` jadi `< 1`; `reference > 0`
+   jadi `>= 0`. Angka 1 USDT untuk daily PnL dan modal awal bukan kondisi
+   yang muncul di produksi. Setara.
+3. **Mutan di jalur yang memang tidak diuji.** `_persist_open`,
+   `_publish`, `record_exchange_fills`, `_liquidate` — hampir semua mutan
+   di `executor.py` dan `position_manager.py` karena test tidak pernah
+   menjalankan kode live sungguhan dengan bursa tiruan yang cukup lengkap.
+   Ini celah test NYATA, tapi cakupannya besar dan perlu item tersendiri.
+
+### Tiga celah test yang ditemukan dan ditutup
+
+Semua di batas breaker, dan semuanya pola yang sama: test lama menguji
+"dekat batas" (0.9x, 1.2x, `max ± 1`), bukan batasnya.
+
+| Mutan | Kodenya | Akibatnya |
+|---|---|---|
+| `master_blockers__mutmut_57` | `<=` jadi `<` pada `realized_pnl` | daily-loss breaker live tidak menyala tepat di batas |
+| `master_blockers__mutmut_61` | `>=` jadi `>` pada `consecutive_errors` | error ke-3 lolos, trading tidak berhenti |
+| `validate_trade__mutmut_22` | `>=` jadi `>` pada `loss_fraction` | breaker daily-loss melebar satu titik |
+
+Ditutup di `64acf92` dengan 8 test baru. Bukti cabutan keempat di pesan
+commit. Gerbang "semua mutan selamat di safety.py dan breaker ditutup"
+terpenuhi untuk sel yang bukan ekuivalen: tiga celah ditemukan, tiga
+ditutup, sisanya ekuivalen atau di luar cakupan gerbang.
+
+### Yang BELUM tertutup
+
+Mutan selamat di `executor.py` (909) dan `position_manager.py` (314)
+belum diinventarisasi satu per satu. Fungsi yang paling banyak
+selamat:
+
+```
+LiveExecutor._persist_open      402
+LiveExecutor._close             208
+LiveExecutor.record_exchange_fills  175
+LiveExecutor._open              133
+PositionManager.close_position   99
+PositionManager._liquidate       72
+PositionManager.open_position    60
+```
+
+`_persist_open` dan `_close` adalah jalur uang. Ini item tersendiri dan
+belum dikerjakan — daftar di atas bukan keterangan mutan yang selalu
+selamat, hanya yang perlu dibaca.
 
 ## Berikutnya
 
