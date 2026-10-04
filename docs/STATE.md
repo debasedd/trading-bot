@@ -221,6 +221,15 @@ diinvestigasi.
    itu kosong. Item (i) kemungkinan harus menanganinya.
 6. **Mutan yang selamat di jalur safety belum diinventarisasi** — tugas
    operator butir 11.
+7. **Satu kegagalan seed 3 tidak dijelaskan.** Sweep pertama gagal di
+   `test_api_wallet_separation` pada seed 3 dengan dua test. Tree masih
+   berubah saat itu, dan file test tersebut tidak menyentuh disk
+   (`Database`/`sqlite3`/`open(` nol kemunculan), jadi tabrakan antar
+   proses tidak bisa menjelaskan — sudah dicoba dan tidak terpicu.
+   Sweep bersih berikutnya 25/25 hijau, dan seed 3 hijau 4x berturut
+   sesudahnya. Log kegagalan yang lama tidak tersimpan, jadi tidak bisa
+   diinvestigasi ulang. `_seed_sweep.py` sekarang menyimpan log penuh ke
+   `%TEMP%/seed_sweep_logs/` supaya kasus berikutnya bisa ditelusuri.
 
 ## Berikutnya
 
