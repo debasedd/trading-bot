@@ -166,7 +166,6 @@ class LiveExchange:
         try:
             from eth_account import Account
             from hyperliquid.exchange import Exchange
-            from hyperliquid.info import Info
             from hyperliquid.utils import constants as hl_constants
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
@@ -190,11 +189,13 @@ class LiveExchange:
         )
         self.base_url = base_url
 
-        self.info = Info(base_url, skip_ws=True)
-        self.exchange = Exchange(
-            self.wallet, base_url, account_address=account_address,
-            timeout=timeout,
-        )
+        self._info = None
+        self._base_url = base_url
+        # `Exchange` SDK juga membangun `Info` di __init__-nya, jadi dia
+        # ikut ditunda. Lihat properti `exchange`.
+        self._exchange = None
+        self._account_address = account_address
+        self._timeout = timeout
 
         logger.info(
             f"LiveExchange siap: {self.address} di "
@@ -207,6 +208,68 @@ class LiveExchange:
             )
 
     # ── Pembacaan state ────────────────────────────────────────────────
+
+    @property
+    def info(self):
+        """
+        Klien `Info` Hyperliquid, dibangun saat pertama kali dibutuhkan.
+
+        SENGAJA TIDAK dibangun di `__init__`. `Info(base_url)` langsung
+        melakukan POST ke `api.hyperliquid-testnet.xyz` untuk mengambil
+        `spotMeta` saat konstruksi, jadi membangunnya di `__init__`
+        berarti SETIAP `LiveExchange(...)` — termasuk di test offline —
+        menembus jaringan.
+
+        Yang hilang dari penulisan ini bukan kebetulan, tapi bukti:
+        110 kegagalan berturut-turut di `tests/test_api_wallet_separation.py`
+        dengan `socket.getaddrinfo(('api.hyperliquid-testnet.xyz', 443))`.
+        Test itu didokumentasikan sebagai "offline, tidak pernah menyentuh
+        jaringan" dan secara rutin memang memanggil bursa sungguhan,
+        memakai jaringan operator.
+
+        Properti ini menjaga backward compatibility: semua pemanggil lama
+        `exchange.info.…` tetap bekerja tanpa perubahan.
+        """
+        if self._info is None:
+            from hyperliquid.info import Info
+            self._info = Info(self._base_url, skip_ws=True)
+        return self._info
+
+    @info.setter
+    def info(self, value):
+        """
+        Suntik klien `Info` — HANYA untuk test.
+
+        Kode produksi tidak pernah menulis `exchange.info`. Setter ini
+        ada supaya test yang menyuntik `Info_double` tidak harus tahu
+        bahwa state internalnya bernama `_info`, dan supaya refactor
+        nanti tidak memaksa mengubah delapan file test sekaligus.
+        """
+        self._info = value
+
+    @property
+    def exchange(self):
+        """
+        Klien `Exchange` Hyperliquid, dibangun saat pertama dipakai.
+
+        `Exchange.__init__` SDK membuat `Info(base_url)` di dalamnya,
+        yang langsung POST ke bursa untuk `spotMeta`. Jadi membangunnya
+        di `__init__` LiveExchange berarti setiap instance — termasuk di
+        test offline — menembus jaringan.
+        """
+        if self._exchange is None:
+            from hyperliquid.exchange import Exchange
+            self._exchange = Exchange(
+                self.wallet, self._base_url,
+                account_address=self._account_address,
+                timeout=self._timeout,
+            )
+        return self._exchange
+
+    @exchange.setter
+    def exchange(self, value):
+        """Suntik klien `Exchange` — HANYA untuk test, simetris dengan `info`."""
+        self._exchange = value
 
     def get_account_state(self) -> Dict[str, Any]:
         """Margin, collateral, dan posisi sesuai pandangan BURSA."""

@@ -313,3 +313,238 @@ def guard_global_state(request):
         "  state global sama sekali.",
         pytrace=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Isolasi kredensial dan jaringan
+# ---------------------------------------------------------------------------
+
+# Env yang mengaktifkan live. Semuanya DIHAPUS sebelum tiap test.
+#
+# Alasannya fail-closed: kalau salah satu test set `TRADEBOT_LIVE=1` dan
+# tidak memulihkannya, test berikutnya yang membaca `SafetyGate` akan
+# melihat gerbang terbuka dan order LIMA ke bursa — bukan ke testnet.
+# Repo ini tidak pernah mengirim order ke mainnet, dan pytest yang
+# menginxikan itu
+# adalah ide yang sangat buruk.
+_LIVE_ENV_KEYS = (
+    "TRADEBOT_LIVE",
+    "TRADEBOT_LIVE_CONFIRMED",
+    "TRADEBOT_LIVE_KILL_SWITCH",
+    "HYPERLIQUID_PRIVATE_KEY",
+    "HYPERLIQUID_API_PRIVATE_KEY",
+    "HYPERLIQUID_ACCOUNT_ADDRESS",
+)
+
+
+@pytest.fixture(autouse=True)
+def scrub_live_env(request):
+    """
+    Hapus variabel `HYPERLIQUID_*` dan pengalih live sebelum tiap test.
+
+    Tidak ada test yang boleh bergantung pada env ini dari luar. Test
+    yang butuh env hidup harus memakainya lewat `env=` eksplisit
+    (`repro_helpers.clean_gate`) atau `monkeypatch.setenv` sendiri, yang
+    keduanya pulih sendiri.
+
+    Env yang dihapus dikembalikan apa adanya setelah test, jadi test
+    yang memang menyetelnya sendiri (test_live_tui, test_live_safety)
+    tetap bisa bekerja.
+    """
+    saved = {}
+    for key in list(os.environ):
+        if key.startswith("HYPERLIQUID_") or key in _LIVE_ENV_KEYS:
+            saved[key] = os.environ.pop(key)
+
+    # Jangan biarkan test mewarisi penanda aktif dari shell operator.
+    for key in _LIVE_ENV_KEYS:
+        os.environ.pop(key, None)
+
+    try:
+        yield
+    finally:
+        # HANYA env yang ada sebelum test yang dikembalikan. Env yang
+        # ditulis test sendiri dibiarkan — `guard_global_state` harus
+        # sempat melihatnya dan melaporkannya. Kalau fixture ini yang
+        # membersihkannya duluan, guard pencemar jadi buta tepat untuk
+        # kelas pencemar yang paling berbahaya: env yang menyalakan live.
+        for key, value in saved.items():
+            os.environ[key] = value
+
+
+class NetworkAccessDenied(RuntimeError):
+    """Dipanggil ketika test mencoba membuka koneksi jaringan."""
+
+
+# Rujukan asli, diisi sekali saat pemblokir pertama dipasang. Opt-out
+# membacanya supaya tidak perlu menebak hierarki kelas.
+_REAL_SOCKET = None
+
+
+def _install_network_block():
+    """
+    Pasang pemblokir socket. Kembalikan fungsi untuk melepasnya.
+
+    Dipisah dari fixture supaya `pytest_configure` bisa memanggilnya
+    SEBELUM collection — kalau pemblokir dipasang sebagai fixture
+    session, test yang gagal saat import modul masih bisa membuka
+    koneksi sebelum fixture sempat jalan.
+    """
+    global _REAL_SOCKET
+    import socket as _socket
+
+    real_socket = _socket.socket
+    real_create_connection = _socket.create_connection
+    real_getaddrinfo = _socket.getaddrinfo
+
+    if _REAL_SOCKET is None:
+        _REAL_SOCKET = (real_socket, real_create_connection, real_getaddrinfo)
+
+    def _is_loopback(address):
+        """
+        True kalau alamat tujuan ada di mesin ini sendiri.
+
+        PENTING: `socket.socketpair()` di Windows dibangun dari fallback
+        yang memanggil `connect()` ke `localhost` dengan port ephemeral.
+        Ini dipakai `asyncio` untuk self-pipe event loop — tanpa ini,
+        SETIAP `IsolatedAsyncioTestCase` gagal saat membuat loop, dan 185
+        test gagal karena internal runtime, bukan karena test suite
+        menyentuh jaringan.
+
+        Yang dikecualikan hanya loopback. Koneksi ke host mana pun di
+        luar mesin ini tetap ditolak.
+        """
+        if not isinstance(address, tuple) or len(address) < 1:
+            return False
+        host = address[0]
+        if host in ("127.0.0.1", "::1", "localhost", "", None):
+            return True
+        # Windows juga bisa menyimpan host "127.0.0.1" dalam bentuk lain.
+        try:
+            import ipaddress
+            return ipaddress.ip_address(str(host)).is_loopback
+        except (ValueError, ImportError):
+            return False
+
+    def _denied(what, target):
+        return NetworkAccessDenied(
+            "Akses jaringan diblokir di test suite: %s(%r).\n"
+            "  Test tidak boleh memanggil bursa sungguhan. Kalau test suite\n"
+            "  meng-query API publik dengan key milik operator, itu terjadi\n"
+            "  setiap kali suite dijalankan, diam-diam dan tidak terlihat.\n"
+            "  Stub dengan objek tiruan. Kalau test memang butuh loopback,\n"
+            "  tandai dengan pytest.mark.no_network dan sebut alasannya.\n"
+            "  atau jalankan dengan TRADEBOT_ALLOW_NETWORK=1." % (what, target)
+        )
+
+    class _BlockedSocket(real_socket):
+        def connect(self, address):
+            if _is_loopback(address):
+                return real_socket.connect(self, address)
+            raise _denied("socket.connect", address)
+
+        def connect_ex(self, address):
+            if _is_loopback(address):
+                return real_socket.connect_ex(self, address)
+            raise _denied("socket.connect_ex", address)
+
+        def sendto(self, *args):
+            target = args[1] if len(args) > 1 else None
+            if _is_loopback(target):
+                return real_socket.sendto(self, *args)
+            raise _denied("socket.sendto", target)
+
+        def sendmsg(self, *args):
+            raise _denied("socket.sendmsg", None)
+
+    def _blocked_create_connection(address, *a, **kw):
+        raise _denied("socket.create_connection", address)
+
+    def _blocked_getaddrinfo(host, port, *a, **kw):
+        raise _denied("socket.getaddrinfo", (host, port))
+
+    _socket.socket = _BlockedSocket
+    _socket.create_connection = _blocked_create_connection
+    _socket.getaddrinfo = _blocked_getaddrinfo
+
+    def _restore():
+        """
+        Kembalikan soket ke kondisi sebelum pemblokir dipasang.
+
+        Penting: `_REAL_SOCKET`, bukan `real_socket` lokal. Kalau fungsi
+        ini dipanggil lagi setelah opt-out, `real_socket` lokal akan
+        menunjuk ke subclass yang sama -- jadi `socket.socket` menjadi
+        subclass dari subclass, dan test yang di-*override* bisa lolos
+        karena diwarisi tak terduga.
+        """
+        _socket.socket, _socket.create_connection, _socket.getaddrinfo = _REAL_SOCKET
+
+    return _restore
+
+
+def pytest_configure(config):
+    """
+    Pasang pemblokir jaringan sebelum test pertama jalan.
+
+    `scope="session"` pada fixture akan terlalu lambat: fixture baru
+    jalan setelah collection, dan beberapa modul di-import saat
+    collection. Kalau salah satunya membuka koneksi di level import,
+    pemblokir sudah harus aktif.
+    """
+    config.addinivalue_line(
+        "markers",
+        "no_network: test ini boleh memakai soket. Wajib menyebut alasannya "
+        "di docstring — loopback sudah dikecualikan secara implisit, jadi "
+        "pengecualian ini untuk listener sungguhan.",
+    )
+
+    if os.environ.get("TRADEBOT_ALLOW_NETWORK") == "1":
+        return
+    config._network_restore = _install_network_block()
+
+
+def pytest_unconfigure(config):
+    restore = getattr(config, "_network_restore", None)
+    if restore is not None:
+        restore()
+        config._network_restore = None
+
+
+def pytest_collection_modifyitems(config, items):
+    """
+    Terapkan `pytest.mark.no_network` sebagai opt-out eksplisit.
+
+    Loopback TIDAK dikecualikan secara diam-diam. Kalau ada test yang
+    benar-benar butuh soket — server lokal, fixture HTTP — ia harus
+    menandainya, supaya alasan ada di kode yang bisa direview, bukan
+    hanya di konfigurasi lokal orang yang menjalankan.
+
+    Opt-out dipasang lewat context manager per-test, bukan melepas
+    pemblokir secara permanen: begitu test selesai, soket terkunci lagi.
+    Melepas session-wide berarti test berikutnya ikut terbuka hanya
+    karena test sebelumnya menandai dirinya.
+    """
+    for item in items:
+        if item.get_closest_marker("no_network"):
+            item.fixturenames.append("_network_optout")
+
+
+@pytest.fixture
+def _network_optout():
+    """
+    Buka soket selama satu test yang ditandai `no_network`.
+
+    Rujukan asli disimpan saat pemblokir dipasang (`_REAL_SOCKET`),
+    bukan ditebak dari hierarki kelas — menebak membuat opt-out rapuh
+    kalau bentuk pemblokir berubah.
+
+    Yang dikembalikan adalah FUNGSI pasang ulang, bukan tuple; memasang
+    ulang itu yang mengembalikan pemblokir ke kondisi semula.
+    """
+    import socket as _socket
+
+    _socket.socket, _socket.create_connection, _socket.getaddrinfo = _REAL_SOCKET
+    try:
+        yield
+    finally:
+        _install_network_block()

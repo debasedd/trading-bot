@@ -123,6 +123,41 @@ class TestSigningAndQueryAddressesAreSeparate(unittest.TestCase):
         self.assertEqual(ex.query_address, MAIN_WALLET.lower())
 
 
+class _RecordingInfo:
+    """
+    `Info` tiruan yang mencatat alamat yang dibaca.
+
+    Hanya punya method yang butuh alamat. Sengaja TIDAK mewarisi
+    `hyperliquid.info.Info` — kelas itu melakukan POST ke bursa di
+    `__init__` untuk `spotMeta`, jadi mewarisinya berarti memanggil
+    jaringan sungguhan.
+    """
+
+    def frontend_open_orders(self, user):
+        return []
+
+    def query_order_by_oid(self, user, oid):
+        return {"status": "order", "order": {"status": "open"}}
+
+    def user_fills(self, user, startTime=None):
+        return []
+
+    def clearinghouse_state(self, user, dex=""):
+        return {"assetPositions": [], "marginSummary": {}}
+
+    def user_state(self, user):
+        return {"assetPositions": [], "marginSummary": {}, "withdrawable": "0"}
+
+    def name_to_asset(self, name):
+        return {"BTC": 0, "ETH": 1, "SOL": 2, "HYPE": 3}.get(name, 0)
+
+    def meta(self):
+        return {"universe": []}
+
+    def user_rate_limit(self, user):
+        return {}
+
+
 class TestInfoCallsUseTheQueryAddress(unittest.TestCase):
     """
     Semua pembacaan bursa harus memakai alamat yang benar.
@@ -135,11 +170,23 @@ class TestInfoCallsUseTheQueryAddress(unittest.TestCase):
 
     def _info(self):
         ex = build_exchange(MAIN_WALLET)
-        info = ex.info
+
+        # SUNTIK Info tiruan. Versi lama memakai `ex.info` langsung,
+        # yang membangun `Info(base_url)` SDK -- dan itu melakukan POST
+        # nyata ke `api.hyperliquid-testnet.xyz` untuk `spotMeta` setiap
+        # kali构造函数 dipanggil. Test ini didokumentasikan sebagai
+        # offline, dan memang memanggil bursa sungguhan.
+        #
+        # Ditemukan oleh pemblokir socket di `conftest.py`: 110 kegagalan
+        # berturut-turut dengan `getaddrinfo(('api.hyperliquid-testnet.xyz', 443))`.
+        info = _RecordingInfo()
+
+        # Setel ke instance, supaya `ex.info` mengembalikan tiruan ini
+        # dan tidak pernah menyentuh jaringan.
+        ex.info = info
 
         # Ganti callable yang menerima alamat, satu per satu, supaya
-        # bisa diawasi. `Info` asli tidak pernah dipanggil: tidak ada
-        # jaringan di test ini.
+        # bisa diawasi.
         def recorder(name, fn):
             def wrapped(user, *args, **kwargs):
                 self.calls.append((name, user))
