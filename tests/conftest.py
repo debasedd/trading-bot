@@ -264,6 +264,132 @@ def pytest_sessionstart(session):
     except Exception as exc:  # pragma: no cover
         print("conftest: gagal memuat config awal (%r); guard akan noisy" % (exc,))
 
+    # Baseline `data_store/` untuk pagar di `tests/test_state_isolation.py`.
+    #
+    # Harus di sini, bukan di fixture: fixture baru jalan setelah test
+    # pertama sudah berjalan, jadi test yang pertama kali menulis akan
+    # terpotong dari pembanding dan tidak pernah dilaporkan.
+    #
+    # `os.chdir` di `isolate_state_paths` TIDAK berlaku di sini —
+    # `pytest_sessionstart` jalan sebelum fixture apa pun, saat cwd masih
+    # repo. Itu justru benar untuk snapshot: yang dibandingkan adalah folder
+    # state produksi yang sesungguhnya.
+    try:
+        import tests.test_state_isolation as fence
+        fence._BASELINE["data_store"] = fence._snapshot()
+    except Exception as exc:  # pragma: no cover
+        print("conftest: gagal ambil baseline data_store (%r); pagar "
+              "isolasi state akan dilewati" % (exc,))
+
+
+def _redirect_log_handlers(target):
+    """
+    Arahkan ulang SEMUA file handler logging ke `target`.
+
+    Kenapa tidak cukup mengubah config: `RotatingFileHandler` menyimpan
+    `baseFilename` sebagai string path absolut saat konstruksi dan tidak
+    pernah membacanya lagi. Config bisa diubah, log tetap masuk ke file
+    produksi. Sudah dicoba: mengubah `get_config().logging.file` tidak
+    mengubah apa pun.
+
+    Handler DITUTUP sebelum dilepas, supaya tidak ada deskriptor file yang
+    tertinggal menulis ke lokasi lama setelah test selesai.
+    """
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for name in list(logging.root.manager.loggerDict):
+        logger = logging.getLogger(name)
+        handlers = getattr(logger, "handlers", None) or []
+        for handler in list(handlers):
+            if not isinstance(handler, RotatingFileHandler):
+                continue
+            try:
+                handler.close()
+                handler.baseFilename = str(target)
+                # `RotatingFileHandler` menyimpan stream terbuka; tanpa
+                # membuka ulang, penulisan berikutnya memakai stream lama
+                # yang sudah tertutup.
+                handler.stream = handler._open()
+                moved += 1
+            except Exception as exc:  # pragma: no cover
+                print("conftest: gagal mengalihkan handler log %s (%r)"
+                      % (name, exc))
+    return moved
+
+
+@pytest.fixture(autouse=True)
+def isolate_state_paths(tmp_path, monkeypatch):
+    """
+    Arahkan SETIAP path state default ke folder temporer.
+
+    MASALAH YANG INI TUTUP
+    ----------------------
+    `_build_live_executor()` membangun `SafetyGate(live_cfg)` tanpa
+    `state_path`, jadi `DayCounters` memakai default
+    `data_store/live_counters.json`. Test yang memanggil fungsi itu
+    sungguhan menulis ke file kill switch PRODUKSI. Saat mutan
+    "preflight dihapus" diuji, engine sungguhan sempat jalan dan file itu
+    muncul dengan `engaged: true` — kill switch palsu yang akan
+    ditemukan operator aktif tanpa sebab, persis gejala yang item (h)
+    harus cegah.
+
+    Isolasi per-test (`_isolated_gate_patch` di
+    `tests/test_live_startup_gate.py`) menutup SATU pemanggil. Yang
+    menutup kelasnya adalah fixture di sini: dia menutup pemanggil
+    mana pun yang lupa mengarahkan path-nya.
+
+    YANG DIARAHKAN
+    ---------------
+    * `data_store/live_counters.json` — state kill switch + counter harian.
+      Ditulis oleh `SafetyGate.persist()` dan `DayCounters.save()`.
+    * `data_store/trading_bot.db` — ledger posisi/trade.
+    * `data_store/order_book.db` — rekorder order book.
+    * `data_store/logs/` — file log, supaya run test tidak menimpa log
+      operator.
+    * `data_store/order_book_recorder.db` — DB rekorder bila dipanggil
+      dengan nama itu di mana pun.
+
+    YANG SENGAJA TIDAK DIARAHKAN
+    ----------------------------
+    File yang memang artefak pengujian dan sudah punya namanya sendiri
+    (`tests/*.db`) tidak ikut dipindah — memindahkannya hanya menambah
+    tempat tanpa menambah perlindungan.
+
+    `guard_data_store_untouched` di file pagar
+    (`tests/test_state_isolation.py`) memeriksa apakah `data_store/`
+    BERUBAH selama suite, jadi kalau ada path yang terlewat dari daftar
+    di atas, pagar itu yang akan menyandal — bukan strata berikutnya.
+    """
+    data_dir = tmp_path / "data_store"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "logs").mkdir(exist_ok=True)
+
+    # `os.chdir` ke tmp_path adalah lapis kedua: path RELATIF seperti
+    # `Path("data_store/live_counters.json")` akan jatuh ke sini, bukan
+    # ke repo. Tanpa ini, fixture ini hanya melindungi kode yang membaca
+    # path dari config — bukan kode yang menghafal string relatif.
+    #
+    # Chdir TIDAK menutupi log: `setup_logger()` sudah menyelesaikan
+    # `cfg.file` saat config dimuat di `pytest_sessionstart`, yaitu SEBELUM
+    # fixture ini jalan. `RotatingFileHandler` menyimpan `baseFilename`
+    # sebagai path ABSOLUT dan tidak pernah membaca ulang config — jadi
+    # cuma mengubah `get_config().logging.file` tidak berpengaruh, sudah
+    # dicoba dan tidak mengubah apa pun.
+    #
+    # Yang perlu: handler yang sudah terpasang diarahkan ulang.
+    #
+    # Bukti bahwa ini perlu: pagar `data_store` melaporkan
+    # `logs/trading_bot.log` berubah 4941112 -> 4957238 byte saat suite
+    # jalan. Log operator ditimpa oleh test.
+    _redirect_log_handlers(data_dir / "logs" / "trading_bot.log")
+
+    monkeypatch.chdir(tmp_path)
+
+    yield data_dir
+
 
 @pytest.fixture(autouse=True)
 def guard_global_state(request):

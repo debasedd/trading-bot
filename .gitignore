@@ -32,6 +32,14 @@ data_store/test_*.db
 data_store/test_*.db-wal
 data_store/test_*.db-shm
 
+# State pengaman. File ini berisi `engaged` — kill switch itu sendiri.
+# Kalau ikut ter-commit, operator berikutnya yang `git clone` mewarisi
+# kill switch milik mesin ini. Kalau hanya tidak ter-commit tanpa diabaikan,
+# file muncul sebagai `??` di setiap `git status` dan akhirnya ada yang
+# commit tanpa sengaja. Diperhatikan oleh tests/test_state_isolation.py.
+data_store/live_counters.json
+data_store/live_counters.json.tmp
+
 # Catatan kerja & probe pengukuran browser (lihat PROJECT_CONTEXT.md §11.2).
 # Semua ini alat bantu development, bukan bagian produk.
 data_store/_*.md
