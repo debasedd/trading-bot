@@ -217,9 +217,15 @@ python _per_file_gate.py            # tiap file sendiri-sendiri (pytest)
 python _per_file_gate.py --unittest # tiap file sendiri-sendiri (unittest)
 ```
 
-**Hash yang terakhir disweep: `055fd48`** — 25/25 hijau, 765 passed tiap
+**Hash yang terakhir disweep: `f922395`** — 25/25 hijau, 765 passed tiap
 seed. Tree tidak diubah selama sweep berjalan; angka itu berlaku untuk
 commit itu saja, bukan untuk HEAD berikutnya.
+
+Catatan: sweep ini dijalankan saat pagar AST masih berhash `055fd48`, lalu
+commit itu di-`--amend` (perbaikan satu kata di pesan commit) menjadi
+`f922395`. Isi pohonnya identik — yang berubah hanya pesan commit — jadi
+angka 25/25 tetap berlaku, dan sekarang hash yang ditulis di sini
+adalah hash yang benar-benar ada di riwayat.
 
 Riwayat sweep yang sudah lewat:
 
@@ -228,7 +234,7 @@ Riwayat sweep yang sudah lewat:
 | 25 seed (awal) | `a3cb243` | 24/25 — seed 3 gagal, penyebabnya belum diketahui saat itu |
 | 25 seed (tree bersih) | `a3cb243` | 25/25 |
 | 25 seed (dengan guard jaringan + env) | `8ea6d7c` | 25/25, 731 passed |
-| 25 seed (preflight + pagar AST) | `055fd48` | 25/25, 765 passed |
+| 25 seed (preflight + pagar AST) | `f922395` | 25/25, 765 passed |
 
 Sweep pertama setelah preflight **dibatalkan** karena pagar AST masih
 sedang disunting saat sweep berjalan. Angka dari sweep yang dibatalkan
@@ -463,7 +469,7 @@ hanya jalur `_build_live_executor()` yang menyentuhnya. Diperbaiki di
 Pencemar urutan acak dan isolate test sudah beres. Urutan berikutnya
 mengikuti urutan operator 2026-10-04.
 
-0. **Preflight saat start — SELESAI** (`bae1c86`, `600f97f`, `055fd48`).
+0. **Preflight saat start — SELESAI** (`bae1c86`, `600f97f`, `f922395`).
    Lihat § Pagar kode yang dimatikan. Ini bukan item (a)–(j); ditemukan
    saat audit working tree, bukan dari daftar operator.
 1. **Mutation testing (butir 11)** — environment siap, hasil run sudah
