@@ -13,13 +13,25 @@ Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   765 passed, 4 skipped          (0 failed, 0 xfailed)
-unittest: Ran 769 tests — OK (skipped=4)
+pytest:   795 passed, 4 skipped          (0 failed, 0 xfailed)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
 cabutan. Dua gerbang yang tersisa — chaos test dan smoke test testnet — butuh
 testnet key dari operator.
+
+**Sweep seed 25 menghasilkan hasil sah: 21 seed selesai penuh dengan 795
+passed, dan 4 seed (3, 8, 16, 21) prosesnya DIBUNUH di tengah jalan —
+bukan gagal test.** Yang dibunuh menghasilkan output kosong, `rc=-1`, dan
+tidak ada satu pun `F` di progress bar. Tiga dari keempatnya lalu
+dijalankan ulang satu per satu: 3, 16, dan 21 hijau 795 passed. Seed 8
+dijalankan ulang dua kali; kedua-duanya mati di ~92% dengan nol kegagalan.
+
+Jadi yang terbukti: **tidak ada kegagalan test di seed mana pun**, dan
+pencetakan urutan tidak menimbulkan pencemar. Yang belum terbukti: 4 dari 25
+run tidak pernah selesai di mesin ini, dan penyebab matinya (yang berada
+di luar proses pytest) belum ditelusuri. Angka "25/25" tidak boleh ditulis
+sebelum itu punya penjelasan — lihat § Gerbang pencemar.
 
 **CATATAN TENTANG HASH:** header sengaja tidak menulis hash commit. Setiap kali
 hash ditulis, commit barunya punya hash lain lagi, jadi tidak ada yang bisa
