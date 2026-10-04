@@ -100,7 +100,14 @@ class _ExchangeDouble(LiveExchange):
 
 
 def _ok_info():
-    """Info tiruan yang sehat: meta ada dan punya universe."""
+    """
+    Info tiruan yang sehat: meta ada dan punya universe.
+
+    `extra_agents` ikut disediakan karena `preflight()` memanggil
+    `verify_agent_wallet()` setiap kali pemisahan wallet di-opt-in. Tanpa
+    itu, test "opt-in lolos" akan gagal karena endpoint tidak ada — bukan
+    karena alurnya salah.
+    """
     class _Info:
         def meta(self):
             return {"universe": [{"name": "BTC", "szDecimals": 5,
@@ -109,6 +116,12 @@ def _ok_info():
         def user_state(self, user):
             return {"assetPositions": [],
                     "marginSummary": {"accountValue": "1000"}}
+
+        def extra_agents(self, user):
+            # Signer pada test-test preflight adalah OTHER_WALLET, jadi
+            # master harus melaporkannya sebagai agent yang sah.
+            return [{"name": "bot", "address": OTHER_WALLET,
+                     "validUntil": 0}]
 
     return _Info()
 

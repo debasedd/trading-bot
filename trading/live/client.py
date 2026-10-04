@@ -59,6 +59,8 @@ class PreflightError(RuntimeError):
     UNIVERSE_EMPTY = "universe_empty"
     BAD_ADDRESS = "bad_address"
     SIGNER_MISMATCH = "signer_mismatch"
+    AGENT_NOT_REGISTERED = "agent_not_registered"
+    AGENT_CHECK_FAILED = "agent_check_failed"
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -418,6 +420,79 @@ class LiveExchange:
 
     # ------------------------------------------------------------------ tick
 
+    def verify_agent_wallet(self) -> None:
+        """
+        Pastikan signer benar-benar agent wallet yang DAFTAR di master.
+
+        `allow_api_wallet=True` menyatakan NIAT operator, bukan bukti.
+        Dua kesalahan yang berbeda bisa membuat intent itu benar tapi
+        hasilnya tetap salah, dan keduanya terlihat sama dari sisi bot:
+        bot membaca akun yang tidak punya posisi apa pun.
+
+        1. `account_address` salah ketik (`...ab` vs `...ba`). Bursa
+           membalas akun kosong — bukan error — untuk alamat yang tidak
+           dikenal.
+        2. Signer adalah wallet yang tidak pernah didaftarkan sebagai agent
+           di master tersebut. Order yang ditandatangani tidak akan
+           pernah sampai ke akun itu, dan itu baru ketahuan saat order
+           hilang.
+
+        Endpoint: `extraAgents`, yaitu `POST /info {"type": "extraAgents",
+        "user": <master>}`. Bentuk respons mengikuti SDK resmi
+        (`Info.extra_agents`):
+
+            [{"name": str, "address": str, "validUntil": int}, ...]
+
+        Yang diperiksa terhadap MASTER, bukan terhadap `query_address`:
+        agent terdaftar di bawah akun yang men-query dia, bukan di bawah
+        alamat signer-nya sendiri.
+
+        Kalau signer == master, tidak ada agent yang perlu dicek —
+        konfigurasi itu sah dan memaksa operator mendaftarkan agent demi
+        apa yang sudah benar tidak menambah keamanan.
+
+        HANYA membaca. Tidak mengirim order dan tidak mengubah apa pun.
+        """
+        master = (self._account_address or self.address).lower()
+        signer = self.address.lower()
+
+        if master == signer:
+            # Tidak ada pemisahan wallet; tidak ada yang perlu diverifikasi.
+            return
+
+        try:
+            agents = self.info.extra_agents(self._account_address or self.address)
+        except Exception as exc:  # noqa: BLE001
+            raise PreflightError(
+                PreflightError.AGENT_CHECK_FAILED,
+                "Daftar agent wallet tidak bisa dibaca dari bursa ({}). "
+                "Tidak bisa memastikan signer punya wewenang atas akun "
+                "ini, jadi live tidak dijalankan."
+                .format(type(exc).__name__)
+            ) from exc
+
+        registered = {
+            str(a.get("address") or "").strip().lower()
+            for a in (agents or [])
+            if isinstance(a, dict)
+        }
+        if signer not in registered:
+            raise PreflightError(
+                PreflightError.AGENT_NOT_REGISTERED,
+                "Signer ({}) tidak terdaftar sebagai agent wallet dari "
+                "master ({}). Dua kemungkinan: private key yang dipakai "
+                "bukan agent milik akun ini, atau `account_address` diisi "
+                "dengan alamat yang salah. Kalau memang memakai pemisahan "
+                "wallet, daftarkan dulu signer lewat ApproveAgent di UI "
+                "bursa.".format(mask_address(self.address),
+                                 mask_address(master))
+            )
+
+        logger.info(
+            "Agent wallet terverifikasi: signer %s terdaftar di master %s",
+            mask_address(self.address), mask_address(master),
+        )
+
     def preflight(self, allow_api_wallet: bool = False) -> None:
         """
         Pastikan bursa hidup dan kredensial benar SEBELUM order pertama.
@@ -507,6 +582,15 @@ class LiveExchange:
                 .format(mask_address(self.address),
                         mask_address(self._account_address))
             )
+
+        # 5. Bukti, bukan niat: signer harus terdaftar sebagai agent.
+        #
+        # Hanya dicek ketika pemisahan wallet dipakai DAN operator sudah
+        # opt-in. Kalau `allow_api_wallet=False`, cabang 4 di atas sudah
+        # menolak lebih dulu, jadi cek di sini hanya relevan setelah opt-in
+        # itu diterima.
+        if allow_api_wallet:
+            self.verify_agent_wallet()
 
         logger.info(
             "Preflight OK: %d aset, query %s", len(universe),
