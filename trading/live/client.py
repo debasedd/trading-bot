@@ -260,14 +260,35 @@ class LiveExchange:
         return total
 
     def symbol_notional(self, coin: str) -> float:
-        """Nilai nominal posisi terbuka untuk satu koin saja."""
+        """
+        Nilai nominal posisi terbuka untuk satu koin saja.
+
+        `position.coin` di respons bursa adalah STRING ticker ("BTC"),
+        bukan indeks aset. Versi sebelumnya memanggil `int()` pada
+        field itu, jadi setiap pemanggilan melempar `ValueError`.
+
+        Dampaknya bukan cuma fungsi ini: `_remote_context()` memanggilnya
+        SEBELUM `gate.can_send()`, sehingga tidak ada order yang pernah
+        sampai ke gerbang safety -- termasuk order yang seharusnya
+        ditolak karena alasan lain. Gerbang yang tidak pernah dipanggil
+        tidak melindungi apa pun.
+        """
         state = self.get_account_state()
         index = self.info.name_to_asset(coin)
         if index is None:
             return 0.0
+        target = str(coin).strip().upper()
         for asset in state.get("assetPositions") or []:
             pos = asset.get("position") or {}
-            if int(pos.get("coin", -1)) != int(index):
+            name = pos.get("coin")
+            # Satu perbandingan ticker, bukan satu perbandingan indeks:
+            # bursa mengirim nama, dan nama itu yang sebanding dengan
+            # argumen. Indeks hanya dipakai `name_to_asset` untuk
+            # menolak koin yang memang tidak dikenal.
+            if isinstance(name, int):
+                if name != int(index):
+                    continue
+            elif str(name or "").strip().upper() != target:
                 continue
             return abs(float(pos.get("szi") or 0.0)) * float(
                 pos.get("entryPx") or 0.0

@@ -143,9 +143,30 @@ class TestRemoteKeyFormatFact(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(remote[0]["coin"], "BTC")
 
 
-@known_broken("DEFECT-1 client.py:219 int() pada field string")
-class TestSymbolNotionalIntOnStringField(unittest.IsolatedAsyncioTestCase):
-    """Reproduksi: symbol_notional harus bisa membaca coin berupa string."""
+# ═══════════════════════════════════════════════════════════════════
+# DEFECT 1 — SUDAH DIPERBAIKAN.
+#
+# `symbol_notional()` memanggil `int(pos["coin"])` sementara bursa
+# mengirim ticker sebagai STRING ("BTC"). Setiap pemanggilan melempar
+# ValueError.
+#
+# Dampaknya bukan cuma fungsi itu: `_remote_context()` (engine.py:462)
+# memanggilnya SEBELUM `gate.can_send()`, jadi tidak ada order yang pernah
+# sampai ke gerbang safety -- termasuk order yang seharusnya ditolak
+# karena alasan lain. Gerbang yang tidak pernah dipanggil tidak melindungi
+# apa pun.
+#
+# Diperbaiki dengan membandingkan ticker, bukan indeks. Indeks hanya
+# dipakai `name_to_asset()` untuk menolak koin yang memang tidak dikenal.
+#
+# Tidak lagi memakai `@known_broken`: `xfail(strict=True)` mengubah
+# perbaikan menjadi kegagalan (XPASS), jadi penanda itu harus dicabut
+# bersamaan dengan perbaikannya.
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestSymbolNotionalReadsStringTicker(unittest.IsolatedAsyncioTestCase):
+    """symbol_notional harus bisa membaca coin berupa string."""
 
     def test_symbol_notional_does_not_raise_on_real_position(self):
         """HARUS TIDAK MELEMPAR ValueError. Sekarang: int('BTC')."""
