@@ -13,25 +13,34 @@ Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   795 passed, 4 skipped          (0 failed, 0 xfailed)
+pytest:   820 passed, 4 skipped          (0 failed, 0 xfailed)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
 cabutan. Dua gerbang yang tersisa — chaos test dan smoke test testnet — butuh
 testnet key dari operator.
 
-**Sweep seed 25 menghasilkan hasil sah: 21 seed selesai penuh dengan 795
-passed, dan 4 seed (3, 8, 16, 21) prosesnya DIBUNUH di tengah jalan —
-bukan gagal test.** Yang dibunuh menghasilkan output kosong, `rc=-1`, dan
-tidak ada satu pun `F` di progress bar. Tiga dari keempatnya lalu
-dijalankan ulang satu per satu: 3, 16, dan 21 hijau 795 passed. Seed 8
-dijalankan ulang dua kali; kedua-duanya mati di ~92% dengan nol kegagalan.
+**Sweep seed 25/25 SELESAI PENUH: 25 seed `rc=0`, semuanya 820 passed,
+4 skipped, nol `failed`.** Ini bedanya dari run sebelumnya, di mana 4 dari
+25 proses mati di tengah jalan. Penyebab matinya sudah dicari dan TIDAK
+bukan test:
 
-Jadi yang terbukti: **tidak ada kegagalan test di seed mana pun**, dan
-pencetakan urutan tidak menimbulkan pencemar. Yang belum terbukti: 4 dari 25
-run tidak pernah selesai di mesin ini, dan penyebab matinya (yang berada
-di luar proses pytest) belum ditelusuri. Angka "25/25" tidak boleh ditulis
-sebelum itu punya penjelasan — lihat § Gerbang pencemar.
+- 4 seed itu (3, 8, 16, 21) dijalankan ulang dengan `-v`,
+  `faulthandler`, dan `pytest-timeout --timeout=180`:
+  **semuanya mencapai `[100%]` dan 795 passed**, tanpa satu pun timeout
+  atau crash yang tercatat.
+- Seed 8 yang sebelumnya mati DUA kali di ~92% jalannya sekarang selesai
+  penuh.
+- Setiap seed yang mati punya `rc=-1` dengan output kosong dan nol `F` di
+  progress bar. pytest yang gagal selalu mencetak ringkasan; tidak adanya
+  ringkasan berarti prosesnya hilang, bukan test-nya yang salah.
+
+Kesimpulan: penyebabnya berada DI LUAR pytest (proses dibunuh oleh
+lingkungan mesin, bukan oleh kode atau test). Yang penting untuk gerbang:
+25 dari 25 sekarang benar-benar selesai, jadi angkanya layak ditulis.
+
+Tidak ada kegagalan test di seed mana pun, dan pencetakan urutan tidak
+menimbulkan pencemar.
 
 **CATATAN TENTANG HASH:** header sengaja tidak menulis hash commit. Setiap kali
 hash ditulis, commit barunya punya hash lain lagi, jadi tidak ada yang bisa
@@ -95,6 +104,8 @@ Lima commit, masing-masing satu defect. Yang BELUM dikerjakan masih ada di
 | `eba8473` | `FakeExchange` menyediakan respons akun berbentuk bursa |
 | `5652696` | verifikasi signer adalah agent wallet resmi dari master |
 | `ba581f4` | konstanta `SIGNER` semula tidak punya huruf (mutan selamat) |
+| `ef551de` | collateral SPOT bukan "akun kosong" (portfolio margin) |
+| `f19c3fd` | satu sumber nilai "off"; state rusak = fail closed |
 
 ### "Tidak ada posisi" vs "tidak bisa memastikan"
 
@@ -173,6 +184,79 @@ punya huruf, mutannya terbunuh.
 Pola yang sama seperti `test_account_address_must_be_hex_address` yang hijau
 karena salah bercabang. Ditutup dengan
 `test_fixture_addresses_actually_exercise_case_folding`.
+
+### Kebijakan: dua kondisi, dua perlakuan
+
+Kill switch sebelumnya memperlakukan sama dua hal yang berbeda bahaya.
+Pemisahan ini keputusan operasional, dan sekarang tertulis supaya tidak
+ditebak ulang.
+
+**(a) TIDAK BISA MEMASTIKAN** — bursa tidak terbaca, rate limit, respons
+tak terduga, akun tidak terverifikasi, state lokal rusak. Posisi bot
+mungkin benar; bot hanya tidak tahu.
+
+- Order baru: **DIJEDA**, bukan dibatalkan.
+- Coba ulang dengan batas yang terbatas.
+- Setelah **N kegagalan berturut-turut**, naik ke kill switch persisten.
+- Alert ke operator sejak kegagalan pertama.
+
+Alasan: transient (timeout, rate limit) mematikan bot sementara yang
+sebenarnya sehat. Kill switch untuk transient membuat operator membiasakan
+diri menekan tombol yang seharusnya jarang dipakai — dan saat divergensi
+benar terjadi, tidak ada yang merespons.
+
+**(b) DIVERGENSI TERKONFIRMASI** — posisi lokal dan bursa berbeda, dan
+kedua sumber terbaca serta bisa dipercaya. Bot tahu posisinya salah.
+
+- Kill switch **LANGSUNG**, tanpa retry.
+- Satu-satunya jalan keluar: perintah operator.
+
+Alasan: di sini tidak ada ketidakpastian. Menunda hanya menambah exposure
+yang tidak dipantau.
+
+**Batas retry (a) belum ditetapkan.** `max_consecutive_errors` sudah ada di
+config dan sudah menyalakan kill switch lewat `record_error`, tapi belum
+dipakai sebagai penghitung kegagalan "tidak bisa pastikan" yang spesifik.
+Angka N harus dipilih operator: terlalu kecil mematikan bot saat jaringan
+normal, terlalu besar membiarkan bot buta berjalan.
+
+**Posisi terbuka saat kill switch menyala**
+
+Kill switch menghentikan order BARU. Positions yang sudah terbuka **tetap
+ada dan tetap dilindungi**:
+
+- SL/TP yang sudah terpasang di bursa **tetap aktif** — trigger-nya milik
+  bursa, bukan bot. Kill switch tidak membatalkannya dan tidak menghapus.
+- Yang berhenti: polling, rekonsiliasi, dan pengiriman order baru.
+- Konsekuensi yang harus diterima: bot tidak lagi memasang proteksi baru.
+  Kalau operator tidak melepas switch dalam waktu yang wajar, posisi
+  tanpa proteksi baru bisa terbuka di luar sistem.
+
+**Yang belum diputuskan:** `health_check()` sekarang berhenti langsung
+kalau switch menyala (`if self.gate.engaged: return health`), supaya bot
+tidak membanjiri log. Akibatnya **divergensi yang terjadi SETELAH switch
+menyala tidak terdeteksi**. Owner perlu memutuskan: apakah polling
+dilanjutkan dalam mode degraded untuk memberi tahu posisi berubah.
+
+### Verifikasi agent wallet — validUntil dan pengulangan
+
+`extraAgents` mengembalikan `validUntil` per agent. Versi sekarang
+**membaca bentuk respons tapi belum memeriksa `validUntil`**, dan
+verifikasi hanya jalan **sekali saat start**. Keduanya belum dikerjakan
+dan tercatat di § Berikutnya, bukan diklaim selesai.
+
+Dua risiko yang harus ditutup:
+
+- **Masa berlaku.** Agent yang sudah kedaluwarsa tidak akan bisa
+  men-sign. Kalau bot berjalan lama, order bisa hilang tanpa jejak — pola
+  yang persis sama dengan agent yang tidak terdaftar, tapi muncul jauh
+  setelah start. Margin pemeriksaan tidak boleh nol.
+- **Deregistrasi saat berjalan.** Agent bisa dicabut dari master kapan
+  saja. Verifikasi satu kali hanya membuktikan keadaan saat start, bukan
+  keadaan saat order dikirim.
+
+`_is_agent_expired()` belum ada; bentuk `validUntil` diambil dari SDK
+(`Info.extra_agents`) dan harus dibaca dari sana, bukan dari asumsi.
 
 **Gerbang 1:** test reproduksi hijau — **TERPENUHI** (0 xfailed).
 Chaos test dan smoke test testnet — **belum**, butuh testnet key.

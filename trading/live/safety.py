@@ -514,7 +514,7 @@ class SafetyGate:
         switch di `record_error`. Kalau tidak, `can_send` akan langsung
         menyalakannya lagi pada error berikutnya dan operator melihat
         switch "mati" selama satu order sebelum menyala lagi — lebih buruk
-        daripada tidak melepasnya sama sekali, karena ia який menyalakan
+        daripada tidak melepasnya sama sekali, karena ia menyalakan
         keyakinan salah bahwa masalahnya beres.
         """
         if not self.engaged:
