@@ -13,14 +13,14 @@ Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   820 passed, 4 skipped          (0 failed, 0 xfailed)
+pytest:   888 passed, 4 skipped          (0 failed, 0 xfailed)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
 cabutan. Dua gerbang yang tersisa — chaos test dan smoke test testnet — butuh
 testnet key dari operator.
 
-**Sweep seed 25/25 SELESAI PENUH: 25 seed `rc=0`, semuanya 820 passed,
+**Sweep seed 25/25 SELESAI PENUH di commit akhir: 25 seed `rc=0`, semuanya 888 passed,
 4 skipped, nol `failed`.** Ini bedanya dari run sebelumnya, di mana 4 dari
 25 proses mati di tengah jalan. Penyebab matinya sudah dicari dan TIDAK
 bukan test:
@@ -35,9 +35,29 @@ bukan test:
   progress bar. pytest yang gagal selalu mencetak ringkasan; tidak adanya
   ringkasan berarti prosesnya hilang, bukan test-nya yang salah.
 
-Kesimpulan: penyebabnya berada DI LUAR pytest (proses dibunuh oleh
-lingkungan mesin, bukan oleh kode atau test). Yang penting untuk gerbang:
-25 dari 25 sekarang benar-benar selesai, jadi angkanya layak ditulis.
+PENYEBAB KEMATIAN TIDAK TERIDENTIFIKASI DAN TIDAK DIREPRODUKSI
+-------------------------------------------------------------
+Pernyataan di atas harus dibaca persis: hanya tidak ada bukti bahwa
+penyebabnya DI LUAR pytest, hanya bahwa tidak ada jejak di dalam pytest.
+
+Yang diketahui:
+  * Empat seed mati punya 
+c=-1, output kosong, dan nol F.
+  * Dijalankan ulang dengan -v, aulthandler, dan
+    pytest-timeout --timeout=180: semuanya mencapai [100%].
+  * Tidak ada timeout, tidak ada crash C-level, tidak ada F.
+
+Yang TIDAK diketahui: apa yang membunuh prosesnya. Tidak ada log sistem,
+tidak ada dump, dan tidak ada pola yang bisa diulang secara sengaja.
+
+Kenapa ini penting dan tidak boleh dilewati: mutan yang selamat pada
+salah satu run bisa menjadi mati pada run berikutnya karena tekanan
+memori atau proses, bukan karena kodenya. Gate akhir tetap exige
+25 seed LENGKAP di commit akhir; angka parsial tidak ditulis sebagai
+lolos.
+
+Tidak ada kegagalan test di seed mana pun, dan pencetakan urutan tidak
+menimbulkan pencemar.
 
 Tidak ada kegagalan test di seed mana pun, dan pencetakan urutan tidak
 menimbulkan pencemar.
@@ -484,6 +504,7 @@ Riwayat sweep yang sudah lewat:
 | 25 seed (tree bersih) | `a3cb243` | 25/25 |
 | 25 seed (dengan guard jaringan + env) | `8ea6d7c` | 25/25, 731 passed |
 | 25 seed (preflight + pagar AST) | `f922395` | 25/25, 765 passed |
+| 25 seed (commit akhir (h)) | `d4ede06` | 25/25, 888 passed |
 
 Sweep pertama setelah preflight **dibatalkan** karena pagar AST masih
 sedang disunting saat sweep berjalan. Angka dari sweep yang dibatalkan
