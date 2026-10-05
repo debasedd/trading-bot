@@ -129,6 +129,38 @@ class TestOffValuesHaveOneSource(unittest.TestCase):
         blockers = [b.value for b in gate.master_blockers()]
         self.assertIn("kill switch aktif", blockers)
 
+    def test_master_blockers_consults_the_constant_not_a_literal(self):
+        """
+        `master_blockers()` harus membaca KONSTANTA, bukan daftar literal.
+
+        Mutasi "kembalikan daftar `("", "0", "false", "no")` sendiri"
+        survived setelah env tidak lagi bisa melepas switch: karena
+        `engaged` selalu True dalam semua test di sini, blocker
+        `KILL_SWITCH` muncul dari `self.engaged` APA pun isi daftar di
+        `master_blockers`. Dua daftar identik secara perilaku — jadi test
+        berbasis perilaku tidak bisa membedakannya.
+
+        Test ini menutup celah itu dengan MENGUBAH konstantanya: kalau
+        `master_blockers()` memakai literal, nilai tambahan itu tidak
+        berpengaruh; kalau memakai konstanta,анеiesz.polanya langsung
+        kelihatan.
+        """
+        sentinel = "off-juga-untuk-tes"
+        original = SafetyGate.KILL_SWITCH_OFF_VALUES
+        try:
+            SafetyGate.KILL_SWITCH_OFF_VALUES = frozenset(
+                set(original) | {sentinel})
+            # Gate yang TIDAK engaged, env = nilai sentinel. Kalau daftar
+            # off dibaca, ini tidak menyalakan blocker.
+            gate = _gate(_fresh_path(), TRADEBOT_LIVE_KILL_SWITCH=sentinel)
+            blockers = [b.value for b in gate.master_blockers()]
+            self.assertNotIn(
+                "kill switch aktif", blockers,
+                "master_blockers tidak membaca KILL_SWITCH_OFF_VALUES — "
+                "ia memakai daftar literal sendiri")
+        finally:
+            SafetyGate.KILL_SWITCH_OFF_VALUES = original
+
     def test_constant_matches_observed_behaviour(self):
         """Kontrol: konstanta harus sama dengan yang diamati."""
         observed_off = []
