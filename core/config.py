@@ -368,6 +368,31 @@ class LiveConfig:
     # Jumlah hari tanpa kecocokan sebelum sistem menolak trading lagi.
     reconciliation_tolerance_days: int = 0
 
+    # ── Kebijakan "tidak bisa dipastikan" ─────────────────────────────────
+    #
+    # Kondisi ini BEDA dari divergensi. Divergensi = kita tahu posisinya
+    # salah, dan kill switch langsung. "Tidak bisa memastikan" = kita tidak
+    # tahu sama sekali — timeout, rate limit, respons tak terduga. Di sana
+    # kill switch langsung akan mematikan bot yang sebenarnya sehat, dan
+    # operator akan terbiasa menekan tombol yang seharusnya jarang dipakai.
+    #
+    # Sifat policy ini: order baru DIJEDA sejak kegagalan pertama (bukan
+    # setelah ketiga), dicoba ulang dengan backoff, dan baru naik ke kill
+    # switch setelah N kegagalan berturut-turut ATAU lewat batas waktu.
+    #
+    # Dua batas, bukan satu: streak menangkap kegagalan yang berdekatan,
+    # sementara batas waktu menangkap kegagalan yang JAUH tapi terus —
+    # misalnya bursa menolak satu permintaan/menit sepanjang malam.
+    unverified_max_consecutive: int = 3
+    unverified_max_seconds: float = 300.0
+
+    # Backoff untuk percobaan ulang, dalam detik. Attempt ke-1 dipakai
+    # saat kegagalan pertama, ke-2 saat kedua, ke-3 saat ketiga.
+    #
+    # 10/30/60 dipilih karena: cukup cepat untuk menahan blip sesaat,
+    # cukup 世纪 jauh untuk tidak membanjiri bursa saat rate limit aktif.
+    unverified_retry_backoff: Tuple[float, ...] = (10.0, 30.0, 60.0)
+
 
 @dataclass
 class AppConfig:
