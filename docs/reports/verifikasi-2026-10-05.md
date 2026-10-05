@@ -34,9 +34,10 @@ tulis menangkapnya sebelum commit. → Diperbaiki di `0d5f605`.
 **6. Angka suite: 888 → 914.** Selisihnya accreted work (12 test wiring
 + 9 test CLI + 5 test validUntil), bukan test yang hilang.
 
-**7. Seed sweep 25 seed BELUM diulang pada commit akhir.** Laporan
-sebelumnya menyebut 25/25 rc=0 pada `d4ede06`. Angka itu TIDAK boleh dipakai
-sebagai bukti untuk kondisi sekarang. Hasil sesi ini di bagian h.
+**7. Seed sweep 25 seed SUDAH diulang** pada 2026-10-05 (bagian h):
+25/25 `rc=0`, semuanya 914 passed. Angka lama `d4ede06` (888 passed)
+dipakai hanya sebagai pembanding, bukan bukti kondisi sekarang.
+Seed 3, 8, 16, dan 21 yang dulu mati sekarang semuanya hijau.
 
 **8. Item 5 (mutmut) TIDAK SELESAI.** Bukan karena tidak dicoba — lihat
 bagian 5. Angka mutmut yang bisa dikumpulkan bertentangan dengan harness
@@ -662,9 +663,35 @@ Angka ini cocok dengan seed 1..6 di bagian h, yang melaporkan
 
 ```
 $ python _seed_sweep.py 25
-```
+seed 1     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 39.65s
+seed 2     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 40.69s
+seed 3     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 40.37s
+seed 4     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.20s
+seed 5     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 40.07s
+seed 6     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 43.51s
+seed 7     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.21s
+seed 8     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 45.47s
+seed 9     rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 45.72s
+seed 10    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.63s
+seed 11    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.89s
+seed 12    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.43s
+seed 13    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.80s
+seed 14    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.93s
+seed 15    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.02s
+seed 16    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.16s
+seed 17    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.38s
+seed 18    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.38s
+seed 19    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.20s
+seed 20    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.25s
+seed 21    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.56s
+seed 22    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 42.04s
+seed 23    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.15s
+seed 24    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 42.23s
+seed 25    rc=0  914 passed, 4 skipped, 3 warnings, 90 subtests passed in 41.09s
 
-_(hasil di bawah)_
+=== 25/25 hijau ===
+SEMUA SEED HIJAU
+```
 
 ---
 
