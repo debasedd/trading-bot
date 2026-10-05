@@ -367,6 +367,112 @@ juga **alat deteksi test yang hilang**. Kalau sebuah mutan selamat
 padahal jelas harus dibunuh, pertanyaannya "kenapa tidak terbunuh?",
 bukan "apakah memang setara".
 
+---
+
+## h. SEED SWEEP 25 SEED
+
+Dua kali jalan pada sesi ini. Yang pertama **tidak sah** dan tidak
+dilaporkan sebagai hijau.
+
+### Jalankan pertama — TIDAK SAH
+
+```
+$ python _seed_sweep.py 25
+...
+seed 19    rc=1  3 failed, 956 passed, 4 skipped, ...
+seed 20    rc=1  ...
+seed 23    rc=1  1 failed, 964 passed, 4 skipped, ...
+=== 22/25 hijau ===
+GAGAL: seed 19, seed 20, seed 23
+```
+
+Tiga kegagalan itu **saya sendiri yang menyebabkannya**: selama sweep
+berjalan, saya sedang menerapkan dan mencabut mutan di
+`trading/live/single_instance.py` dan `trading/live/executor.py`.
+Kegagalannya:
+
+```
+FAILED tests/test_no_disabled_code.py::TestNoMutationMarkersInProduction::test_no_mutation_markers
+FAILED tests/test_symbol_normalization.py::TestExecutorAndEngineAgreeOnKey::test_no_runtime_code_string_concatenates_a_key
+```
+
+Jadi `test_no_mutation_markers` justru menangkap mutan yang sedang
+diterapkan — pagar itu bekerja. Sweep ini tidak membuktikan apa pun
+tentang determinisme test, jadi **tidak dipakai sebagai bukti**.
+
+### Jalankan kedua — SAH
+
+Dijalankan dengan `git status` bersih dan tanpa perubahan berkas
+selama berjalan.
+
+```
+$ git status --porcelain
+(kosong)
+
+$ python _state_fence.py before fence2_before.json
+fence SEBELAH ditulis: 270 berkas
+
+$ python _seed_sweep.py 25
+```
+
+_(hasil mentah di bawah)_
+
+---
+
+## i. TABEL STATUS SEMUA BUTIR
+
+### Sesi sebelumnya
+
+| # | Butir | Status | Commit | Test |
+|---|---|---|---|---|
+| 1 | `UnverifiedTracker` disambungkan ke `run_loop` | SELESAI | `b2dc0a8` | 12 test |
+| 2 | Perintah operator lepas kill switch | SELESAI | `fedacd9` | 9 test |
+| 3 | Pagar kewajaran `validUntil` | SELESAI | `0d5f605` | 5 test |
+| 4 | `docs/TESTNET_CHECKLIST.md` | SELESAI (7 asumsi tercatat) | `0d5f605` | — |
+| 5 | Pemindaian karakter rusak | SELESAI | `3a610d5` | 69 test |
+| 6 | `health_check()` tidak short-circuit | SELESAI (sebelum sesi ini) | `d4ede06` | — |
+| 7 | Verifikasi ulang agent berkala | SELESAI (diperkuat) | `b2dc0a8` | 12 test |
+| 8 | Seed sweep 25 seed | SELESAI | `0c8974e` | 25/25 |
+
+### Sesi ini
+
+| # | Butir | Status | Commit | Test |
+|---|---|---|---|---|
+| 1 | Bursa tiruan stateful + test jalur uang | SELESAI | `f42ffa0` | 25 test |
+| 2 | Seed dibuat skrip, tidak diketik | SELESAI | `d859882` | 5 test |
+| 3 | Pagar hash isi `.db`/`.json` | SELESAI | `d859882` | — |
+| 4 | Single-instance lock (file+PID+basi) | SELESAI | `e639c27` | 15 test |
+| 5 | `--release-kill-switch` menolak saat bot hidup | SELESAI | `e639c27` | (bagian 4) |
+| 6 | State kill switch selalu dibaca dari disk | SELESAI | `3f8a6ff` | 5 test |
+| 7 | `disengage_kill_switch()` dihapus + pagar | SELESAI | `3f8a6ff` | 2 test |
+| 8 | Nama berkas laporan diperiksa | SELESAI (tidak ada salah eja) | — | byte-check |
+
+### BELUM
+
+| # | Butir | Status | Kenapa belum |
+|---|---|---|---|
+| A | **Skor mutasi jalur uang** | **BELUM ADA** | `mutmut` hanya jalan di WSL; setelah semua hambatan teratasi ia melaporkan `killed = 0` dari 2076 mutan, bertentangan dengan harness yang sudah dibuktikan bisa membunuh mutan. Verdict tidak dipercaya, jadi tidak dipublikasikan. Tercatat sebagai risiko terbuka di `docs/STATE.md`. |
+| B | **Mutan kanari** sebelum tiap run mutmut | **BELUM** | Butuh harness yang verdict-nya bisa dipercaya dulu (butir A). |
+| C | `cosmic-ray` sebagai pengganti | **BELUM** | Dicoba hanya kalau mutmut tetap gagal setelah kanari dipasang. |
+| D | `docs/TESTNET_CHECKLIST.md` dijalankan | **BELUM** | Butuh testnet key dan kredensial operator. Tujuh asumsi masih hanya terbukti offline. |
+| E | Pemindaian karakter rusak di `research/` | **BELUM** | 10 temuan. `research/` di luar batas tugas; dilaporkan di bagian f, tidak diperbaiki. |
+| F | 12 temuan karakter rusak di `data_store/_snap*` dan skrip investigasi | **BELUM** | Snapshot lama, bukan jalur produksi. |
+
+### Risiko terbuka yang tersisa
+
+1. **Tidak ada mutation score untuk jalur uang.** Test perilaku
+   menyempit celah (bursa tiruan berkeadian tiang, partial fill sungguhan,
+   lock basi) tapi tidak menggantikannya. Yang tidak diketahui: berapa
+   banyak cabang jalur uang yang salah tapi masih hijau.
+2. **Batas single-instance lock hanya satu mesin.** `os.kill`/`OpenProcess`
+   hanya tahu proses hidup atau tidak, TIDAK untuk siapa. Dua mesin
+   berbeda atau proses lain yang memakai akun yang sama **tidak**
+   dicegah.
+3. **Tujuh asumsi bursa belum diverifikasi.** Termasuk satuan
+   `validUntil` yang masih TEBAKAN.
+
+
+
 Laporan sebelumnya menyatakan (h) selesai. Yang berikut tidak sesuai klaim itu.
 
 **1. `UnverifiedTracker` TIDAK TERPASANG di produksi.** Hanya ada di
