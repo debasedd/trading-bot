@@ -550,7 +550,7 @@ class LiveExchange:
         kedaluwarsa":obot tidak tahu, jadi pemeriksaan kedaluwarsa dilewati
         demi mencegah penolakan palsu pada agent yang sebenarnya sah.
 
-        Satu-satunya alasan None dipakai:鞘 menolak agent yang jelas masih
+        Satu-satunya alasan None dipakai:menolak agent yang jelas masih
         beres hanya karena bursa tidak mengirim field-nya.
         """
         if raw is None or raw == "":
@@ -586,7 +586,7 @@ class LiveExchange:
         Verifikasi ulang agent kalau sudah waktunya. True kalau dicek.
 
         Melempar `PreflightError` kalau agent hilang, kedaluwarsa, atau
-        tidak bisa diverifikasi — pemanggil yang memutuskan算什么
+        tidak bisa diverifikasi — pemanggil yang memutuskanbagaimana
         perlakuannya.
         """
         if not self.agent_verification_due():

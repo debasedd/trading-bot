@@ -390,7 +390,7 @@ class LiveConfig:
     # saat kegagalan pertama, ke-2 saat kedua, ke-3 saat ketiga.
     #
     # 10/30/60 dipilih karena: cukup cepat untuk menahan blip sesaat,
-    # cukup 世纪 jauh untuk tidak membanjiri bursa saat rate limit aktif.
+    # cukup jauh jauh untuk tidak membanjiri bursa saat rate limit aktif.
     unverified_retry_backoff: Tuple[float, ...] = (10.0, 30.0, 60.0)
 
 

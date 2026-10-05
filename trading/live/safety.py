@@ -418,7 +418,7 @@ class SafetyGate:
         except OSError as exc:
             # Kegagalan menulis audit TIDAK boleh membatalkan pelepasan
             # yang sudah terjadi — switch sudah tidak aktif di disk, dan
-            # memaksa operator mengulanginya hanya menambah国有 record.
+            # memaksa operator mengulanginya hanya menambahrecord ganda.
             # Tapi harus terlihat.
             logger.error("Gagal menulis audit log pelepasan (%s): %s",
                          self.audit_path, exc)

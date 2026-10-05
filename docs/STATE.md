@@ -214,11 +214,26 @@ kedua sumber terbaca serta bisa dipercaya. Bot tahu posisinya salah.
 Alasan: di sini tidak ada ketidakpastian. Menunda hanya menambah exposure
 yang tidak dipantau.
 
-**Batas retry (a) belum ditetapkan.** `max_consecutive_errors` sudah ada di
-config dan sudah menyalakan kill switch lewat `record_error`, tapi belum
-dipakai sebagai penghitung kegagalan "tidak bisa pastikan" yang spesifik.
-Angka N harus dipilih operator: terlalu kecil mematikan bot saat jaringan
-normal, terlalu besar membiarkan bot buta berjalan.
+**Angka policy sudah jadi konfigurasi** (`core/config.py`, `LiveConfig`):
+
+```
+unverified_retry_backoff   = (10.0, 30.0, 60.0)   detik
+unverified_max_consecutive = 3
+unverified_max_seconds     = 300.0                 (5 menit)
+```
+
+Backoff naik 10/30/60 untuk menahan blip tanpa membanjiri bursa saat rate
+limit aktif. DUA batas dipakai karena menangkap hal berbeda: streak
+menangkap kegagalan berdekatan, batas waktu menangkap kegagalan yang jarang
+tapi terus-menerus (satu kegagalan per menit sepanjang malam tidak pernah
+mencapai tiga berturut-turut, tapi jelas tidak normal).
+
+**Belum disambungkan ke `run_loop`.** `UnverifiedTracker` sudah ada dan
+policy-nya sudah diuji, tapi loop live belum memanggilnya — yang diuji
+sekarang adalah angka dan perilakunya, bukan integrasinya.
+
+**Batas retry (a) sekarang ditetapkan.**Sebelumnya tercatat sebagai
+keputusan operator yang belum diambil.
 
 **Posisi terbuka saat kill switch menyala**
 
@@ -237,6 +252,53 @@ kalau switch menyala (`if self.gate.engaged: return health`), supaya bot
 tidak membanjiri log. Akibatnya **divergensi yang terjadi SETELAH switch
 menyala tidak terdeteksi**. Owner perlu memutuskan: apakah polling
 dilanjutkan dalam mode degraded untuk memberi tahu posisi berubah.
+
+### Posisi saat kill switch menyala
+
+Kill switch menghentikan order BARU. Positions yang sudah terbuka **tetap
+ada dan tetap dilindungi**:
+
+- SL/TP yang sudah terpasang di bursa **tetap aktif** — trigger-nya milik
+  bursa, bukan bot. Kill switch tidak membatalkannya dan tidak menghapus.
+- Yang berhenti: polling, rekonsiliasi, dan pengiriman order baru.
+- Konsekuensi yang harus diterima: bot tidak lagi memasang proteksi baru.
+  Kalau operator tidak melepas switch dalam waktu yang wajar, posisi
+  tanpa proteksi baru bisa terbuka di luar sistem.
+
+**Flatten TIDAK dilakukan otomatis.** Semua leg harus ditutup bersama
+dengan perintah operator eksplisit, karena menutup separuh posisi
+membuat bot kehilangan setengah proteksi untuk yang lain. Tidak ada
+flattening sebagian.
+
+**Satu pengecualian: proteksi gagal terpasang.** Kalau posisi terbuka tanpa
+SL/TP yang sudah dikonfirmasi ada di bursa, itu posisi telanjang. Dalam
+keadaan itu sistem boleh menutupnya tanpa perintah —menutup posisi
+telanjang lebih baik daripada membiarkannya tanpa batas. Kondisi ini
+belum diimplementasikan dan tercatat sebagai pekerjaan terpisah.
+
+### Rekonsiliasi tetap jalan saat engaged
+
+`health_check()` tidak lagi `return` begitu switch menyala. Pembacaan bursa
+dan perbandingan posisi tetap berjalan; hanya perlakuan AKHIR yang
+berubah, dan switch yang sudah menyala tidak dinyalakan ulang. Bot buta
+saat posisi bergerak adalah bot buta saat keadaannya paling berbahaya.
+
+### Pelepasan kill switch
+
+Env `TRADEBOT_LIVE_KILL_SWITCH` HANYA bisa MENYALAKAN. Nilai `0`/`false`/
+`no`/`off` tidak pernah melepas switch yang aktif di disk — hanya
+memicu pesan yang menyebut jalan yang benar.
+
+Pelepasan hanya lewat `SafetyGate.operator_release()`, yang menuntut:
+
+1. `typed_confirmation` persis sama dengan `RELEASE_CONFIRMATION_PHRASE`.
+2. `reason` tidak boleh kosong.
+3. `reconcile_clean` harus True.
+4. Audit log JSONL: waktu UTC, outcome, alasan, state sebelum/sesudah,
+   hash commit, path state.
+
+Percobaan yang gagal juga dicatat. `audit_path` mengikuti `state_path`,
+jadi test yang mengarahkan state ke tmp_path otomatis mengarahkan audit.
 
 ### Verifikasi agent wallet — validUntil dan pengulangan
 

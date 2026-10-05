@@ -142,7 +142,7 @@ class TestOffValuesHaveOneSource(unittest.TestCase):
 
         Test ini menutup celah itu dengan MENGUBAH konstantanya: kalau
         `master_blockers()` memakai literal, nilai tambahan itu tidak
-        berpengaruh; kalau memakai konstanta,анеiesz.polanya langsung
+        berpengaruh; kalau memakai konstanta,perbedaannya langsung
         kelihatan.
         """
         sentinel = "off-juga-untuk-tes"
