@@ -154,3 +154,5 @@ mutants/
 _mm_*.sh
 _sc_safety.cfg
 _mm_results*.txt
+__before.json
+__after.json
