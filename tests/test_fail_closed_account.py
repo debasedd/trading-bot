@@ -376,13 +376,48 @@ class TestSpotEquityIsNotConfusedWithEmpty(unittest.TestCase):
             {"coin": "USDC", "total": "0.0", "hold": "0"}]})
         self.assertIs(ex.spot_equity_is_nonzero(), False)
 
-    def test_absent_usdc_entry_means_zero(self):
+    def test_absent_usdc_entry_with_other_nonzero_token_is_funded(self):
         """
-        Tidak ada entri USDC = saldo USDC nol yang pasti, bukan "tidak tahu".
+        Tidak ada entri USDC, tapi ada token lain yang bersaldo.
+
+        Ini koreksi terhadap versi test sebelumnya, yang mengembalikan
+        `False` begitu tidak menemukan USDC. Sekarang berlaku untuk "token
+        apa pun yang tidak nol" — akun dengan HYPE tapi tanpa USDC tetap
+        akun bersaldo, dan collateral-nya nyata menurut portfolio
+        margin.
         """
         ex = self._exchange({"balances": [
             {"coin": "PURR", "total": "10.0", "hold": "0"}]})
-        self.assertIs(ex.spot_equity_is_nonzero(), False)
+        self.assertIs(ex.spot_equity_is_nonzero(), True)
+
+    def test_any_nonzero_token_counts_as_funded(self):
+        """
+        Token apa pun yang tidak nol = akun punya collateral.
+
+        Nilai TIDAK dijumlahkan. Untuk pertanyaan "nol atau bukan" satuan
+        token tidak relevan, dan HYPE/BTC adalah collateral yang sah
+        (LTV 0.65 / 0.5 menurut dokumentasi portfolio margin).
+        """
+        for coin, total in (("HYPE", "0.0001"), ("BTC", "0.5"),
+                            ("USDC", "1"), ("PURR", "1")):
+            with self.subTest(coin=coin):
+                ex = self._exchange({"balances": [
+                    {"coin": coin, "total": total, "hold": "0"}]})
+                self.assertIs(
+                    ex.spot_equity_is_nonzero(), True,
+                    "%s=%s seharusnya dihitung sebagai collateral" % (coin, total))
+
+    def test_tiny_nonzero_balance_is_still_funded(self):
+        """
+        Saldo dust tetap collateral.
+
+        Ambang nol, bukan "cukup besar". Menolak 0,0001 HYPE berarti
+        menandai akun yang hidup sebagai kosong — penolakan palsu pada
+        akun yang punya collateral nyata.
+        """
+        ex = self._exchange({"balances": [
+            {"coin": "HYPE", "total": "0.0000001", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), True)
 
     def test_unreadable_response_is_unknown_not_false(self):
         """
@@ -409,15 +444,37 @@ class TestSpotEquityIsNotConfusedWithEmpty(unittest.TestCase):
 
     def test_only_usdc_is_counted(self):
         """
-        Hanya USDC yang dijumlahkan.
+        Token lain yang bersaldo juga dihitung.
 
-        `total` adalah saldo dalam satuan token, jadi BTC dan HYPE tidak
-        bisa dijumlahkan tanpa harga oracle. Menghitungnya sebagai nilai
-        USDC akan salah besar.
+        Dibalik dari versi test sebelumnya, yang mengharapkan HYPE/
+        PURR diabaikan. Untuk pertanyaan "apakah akun ini punya
+        collateral", satuan token tidak relevan — yang relevan adalah nol
+        atau bukan. HYPE dan BTC adalah collateral sah di portfolio
+        margin (LTV 0.65 / 0.5).
         """
         ex = self._exchange({"balances": [
-            {"coin": "PURR", "total": "999999.0", "hold": "0"}]})
+            {"coin": "HYPE", "total": "1.0", "hold": "0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), True,
+                      "HYPE bersaldo harus dihitung sebagai collateral")
+
+    def test_all_zero_tokens_means_empty(self):
+        """Semua token nol = memang tidak ada saldo."""
+        ex = self._exchange({"balances": [
+            {"coin": "USDC", "total": "0", "hold": "0"},
+            {"coin": "HYPE", "total": "0.0", "hold": "0"},
+            {"coin": "PURR", "total": "0", "hold": "0"}]})
         self.assertIs(ex.spot_equity_is_nonzero(), False)
+
+    def test_held_balance_counts_as_funded(self):
+        """
+        Saldo yang sedang di-HOLD order GTC tetap milik akun.
+
+        Kalau order resting tertinggal, collateral-nya sudah ada di bursa
+        dan akun itu jelas bukan kosong.
+        """
+        ex = self._exchange({"balances": [
+            {"coin": "USDC", "total": "0", "hold": "250.0"}]})
+        self.assertIs(ex.spot_equity_is_nonzero(), True)
 
     def test_reads_only_queried_address(self):
         """Query memakai `query_address` (master), bukan signer."""
@@ -504,26 +561,26 @@ class TestPreflightAcceptsSpotFundedAccount(unittest.TestCase):
         ex = self._exchange("0", ConnectionError("rate limit"))
         with self.assertRaises(PreflightError) as ctx:
             ex.preflight()
-        # Tetap menolak, TAPI dengan kode yang berbeda dari "akun kosong".
+        # Tetap menolak, TAPI dengan kode dan pesan yang berbeda dari
+        # "akun kosong".
         self.assertEqual(ctx.exception.code,
                          PreflightError.ACCOUNT_APPEARS_EMPTY)
-        self.assertIn("tidak terbaca", str(ctx.exception),
+        self.assertIn("TIDAK BISA MEMASTIKAN", str(ctx.exception),
                       "pesan harus menyatakan spot tidak terbaca, bukan "
                       "menyimpulkan akunnya kosong")
 
-    def test_non_usdc_spot_balance_is_flagged_in_message(self):
+    def test_non_usdc_spot_balance_is_funded(self):
         """
-        Collateral di aset spot lain harus disebut di pesan.
+        Collateral non-USDC membuat akun LULUS, bukan ditolak.
 
-        Kalau tidak, operator akan menyimpulkan akunnya kosong padahal
-        isinya HYPE atau BTC — dan pesan yang salah arah lebih berbahaya
-        daripada tidak ada pesan.
+        Versi test sebelumnya mengharapkan penolakan dengan pesan
+        "spot selain USDC". Itu berasal dari asumsi bahwa hanya USDC
+        yang dihitung — asumsi yang salah menurut dokumentasi portfolio
+        margin, di mana HYPE dan BTC adalah collateral sah.
         """
         ex = self._exchange("0", {"balances": [
             {"coin": "HYPE", "total": "100", "hold": "0"}]})
-        with self.assertRaises(PreflightError) as ctx:
-            ex.preflight()
-        self.assertIn("spot selain USDC", str(ctx.exception))
+        ex.preflight()
 
 
 if __name__ == "__main__":
