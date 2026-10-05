@@ -1,10 +1,264 @@
-# VERIFIKASI (h) — 2026-10-05
+# VERIFIKASI (h) — 2026-10-05 (revisi 2)
 
 Output MENTAH. Tidak diringkas, tidak diedit.
+
+Revisi ini menggantikan butir verifikasi sebelumnya dan menambah item
+1-8 yang diminta setelahnya. Bagian 1-7 dari revisi pertama tetap di
+bawah sebagai riwayat.
 
 ---
 
 ## SELISIH DENGAN LAPORAN SEBELUMNYA
+
+**1. Angka suite: 888 → 914 → 959.** Akumulasi pekerjaan sesi ini.
+
+**2. Nama berkas laporan.** `docs/reports/verifikasi-2026-10-05.md`.
+Diperiksa byte-per-byte terhadap spesifikasi `verifikasi-<tanggal>.md`:
+
+```
+'verifikasi-2026-10-05.md' ['0x76','0x65','0x72','0x69','0x66','0x69',
+ '0x6b','0x61','0x73','0x69']
+```
+
+v-e-r-i-f-i-k-a-s-i. **Tidak ada salah eja.** Tidak ada perbaikan yang
+diperlukan, dan sengaja tidak ada: mengganti ejaan yang benar hanya
+membuat berkas lama yatim.
+
+**3. Seed tidak lagi diketik manual.** `_seed_pick.py` menulis seed ke
+`docs/reports/seed-bukti-cabutan.txt`; `_seed_use.py` membacanya dari
+berkas.
+
+**4. `disengage_kill_switch()` sekarang DIHAPUS**, bukan hanya terbukti
+tidak terpanggil. Sebelumnya masih ada sebagai metode yang tidak
+dipanggil — yaitu jalur pelepasan kedua yang masih terbuka.
+
+**5. Pagar hash `.db`/`.json` sekarang hash ISI**, bukan ukuran+mtime.
+
+**6. `health_check()` saat engaged: sudah ada sebelumnya, tidak diubah.**
+
+---
+
+## a. REPO
+
+```
+$ git status --porcelain
+(kosong)
+```
+
+```
+$ git log --oneline -15
+d859882 Skrip seed (buat+baca) dan pagar hash isi data_store
+e639c27 Single-instance lock: satu proses bot per akun
+3f8a6ff Kill switch selalu dibaca dari disk; disengage_kill_switch dihapus
+f42ffa0 Bursa tiruan stateful + test perilaku jalur uang (open/persist/close/fills)
+0c8974e Seed sweep 25/25 rc=0 (914 passed) + laporan verifikasi final
+637657d STATE.md: status (h) per 2026-10-05 dan angka suite 914
+3713aaa Laporan verifikasi (h) 2026-10-05: output mentah, selisih klaim lama
+afdd46f gitignore: sandbox mutmut dan skrip bantu
+3a610d5 Perbaiki karakter rusak di produksi dan test
+fedacd9 run.py --release-kill-switch: perintah operator jadi nyata
+0d5f605 validUntil: pagar kewajaran + TESTNET_CHECKLIST
+b2dc0a8 UnverifiedTracker disambungkan ke run_loop
+9e329a2 STATE.md: angka suite dan gerbang akhir di commit (h)
+d4ede06 STATE.md: posisi saat engaged, pelepasan kill switch, dan catatan seed mati
+02e8860 Bukti cabutan: tutup mutan yang selamat setelah "env tidak bisa melepas"
+```
+
+```
+$ Get-ChildItem docs\reports
+Name                     Length
+----                     ------
+fase-0.md                 25212
+fase-1-partial.md         11495
+seed-bukti-cabutan.txt      250
+verifikasi-2026-10-05.md  26142
+```
+
+---
+
+## b. MUTAN DAN KODE MATI DI PRODUKSI
+
+```
+$ git grep -n -E "MUTAN|if False|if True|if 0:|if 1:" -- trading run.py
+grep_rc=1 (1 = kosong)
+```
+
+Tidak ada output. **Kosong.**
+
+---
+
+## c. SAFETY YANG TERPASANG
+
+### `UnverifiedTracker`
+
+```
+$ git grep -n "UnverifiedTracker" -- trading run.py
+run.py:1139:    from trading.live.safety import SafetyGate, UnverifiedTracker
+run.py:1154:    engine.unverified = UnverifiedTracker(cfg=engine.cfg)
+trading/live/engine.py:37:    UnverifiedTracker,
+trading/live/engine.py:369:    unverified: UnverifiedTracker = field(default_factory=UnverifiedTracker)
+trading/live/safety.py:52:class UnverifiedTracker:
+```
+
+**Dipanggil dari jalur produksi**: `LiveEngine.run_loop` (engine.py:1584,
+1610) -> `_note_unverified`/`_note_verified` -> `self.unverified`.
+Plus `run.py:1154` di perintah pelepasan operator.
+
+### `operator_release`
+
+```
+$ git grep -n "operator_release" -- trading run.py
+run.py:1169:def _operator_release() -> int:
+run.py:1271:        released = gate.operator_release(
+run.py:1370:        return _operator_release()
+trading/live/safety.py:412:    def operator_release(self, reason: str, typed_confirmation: str,
+```
+
+**Dipanggil dari jalur produksi**: `_cli(["--release-kill-switch"])`
+(run.py:1370) -> `_operator_release()` (run.py:1169) ->
+`gate.operator_release()` (run.py:1271).
+
+### `release-kill-switch`
+
+```
+$ git grep -n "release-kill-switch" -- run.py
+run.py:1171:    `python run.py --release-kill-switch` — jalan melepas switch yang nyata.
+run.py:1318:    `--release-kill-switch` membaca dan menulis file state yang sama
+run.py:1360:    # Perintah sekali: `python run.py --release-kill-switch`. Jalur ini
+run.py:1363:    if "--release-kill-switch" in argv:
+```
+
+**Dipanggil dari jalur produksi**: `_cli()` run.py:1363.
+
+### `disengage_kill_switch` — TIDAK ADA PEMANGGIL
+
+```
+$ git grep -n "disengage_kill_switch" -- trading run.py
+trading/live/safety.py:438:        `disengage_kill_switch()` pernah ada dan sudah DIHAPUS. Ia tidak
+grep_rc=0
+```
+
+Satu-satunya hasil adalah sebutan di docstring yang menjelaskan
+methodenya sudah dihapus. **Tidak ada pemanggil.** Metodenya sendiri juga
+sudah tidak ada (`test_method_no_longer_exists`).
+
+### `_redirect_log_handlers` — TIDAK ADA DI PRODUKSI
+
+```
+$ git grep -n "_redirect_log_handlers" -- trading run.py
+grep_rc=1
+```
+
+**Kosong.** Hanya ada di `tests/conftest.py` sebagai fixture.
+
+### health_check() saat kill switch engaged
+
+```
+$ git grep -n "already_engaged" -- trading run.py
+trading/live/engine.py:1372:        already_engaged = self.gate.engaged
+trading/live/engine.py:1373:        if already_engaged:
+trading/live/engine.py:1481:        if not health["ok"] and not already_engaged:
+```
+
+**Dipanggil dari jalur produksi**: `run_loop` (engine.py:1578) ->
+`health_check()` (engine.py:1324). `already_engaged` mencegah kill switch
+dinyalakan ulang, TETAPI reconcil dan laporan divergensi tetap berjalan —
+itulah gunanya baris 1372-1373. Tidak ada short-circuit.
+
+### Verifikasi ulang agent wallet berkala
+
+```
+$ git grep -n "reverify_agent_if_due" -- trading run.py
+trading/live/client.py:621:    def reverify_agent_if_due(self) -> bool:
+trading/live/engine.py:1608:                    self.exchange.reverify_agent_if_due()
+```
+
+**Dipanggil dari jalur produksi**: `run_loop` (engine.py:1608), setiap
+putaran. Kegagalan lewat `_note_unverified` (engine.py:1610).
+
+### Single-instance lock
+
+```
+$ git grep -n "SingleInstanceLock\|_acquire_instance_lock" -- trading run.py
+run.py:1093:        lock = _acquire_instance_lock()
+run.py:1288:def _acquire_instance_lock():
+run.py:1305:    lock = SingleInstanceLock(account)
+run.py:1329:    path = SingleInstanceLock(account).path
+trading/live/single_instance.py:134:class SingleInstanceLock:
+```
+
+**Dipanggil dari jalur produksi**: `main()` (run.py:1093) untuk start bot,
+dan `_release_command_refuses_while_bot_running()` (run.py:1329) untuk
+menolak `--release-kill-switch` saat bot hidup.
+
+---
+
+## d. POLUSI STATE
+
+Pagar hash SHA-256 **isi** semua berkas `.db` dan `.json` di `data_store`
+(`-shm` dan `-wal` diabaikan: artefak SQLite yang berubah karena proses
+lain membuka database, bukan karena test).
+
+```
+$ python _state_fence.py before fence_before.json
+fence SEBELAH ditulis: 270 berkas
+
+$ # suite penuh, dua bagian terpisah
+567 passed, 1 warning, 62 subtests passed in 26.62s
+392 passed, 4 skipped, 3 warnings, 28 subtests passed in 20.47s
+
+$ python _state_fence.py after fence_before.json
+fence SESUDAH: 270 berkas
+BARU    : 0 []
+HILANG : 0 []
+BERUBAH: 0 []
+FENCE_RC=0
+```
+
+**Identik.** 270 berkas sebelum, 270 setelah, nol perubahan isi.
+
+### Alasan test yang di-skip
+
+```
+SKIPPED [1] tests\test_live_tui.py:372: jalur POSIX tidak berlaku di Windows
+SKIPPED [1] tests\test_live_tui.py:389: jalur POSIX tidak berlaku di Windows
+SKIPPED [1] tests\test_live_tui.py:378: jalur POSIX tidak berlaku di Windows
+SKIPPED [1] tests\test_live_tui.py:385: jalur POSIX tidak berlaku di Windows
+```
+
+---
+
+## e. ENVIRONMENT
+
+```
+TRADEBOT_LIVE = tidak diset
+TRADEBOT_LIVE_CONFIRMED = tidak diset
+HYPERLIQUID_* lain: tidak ada
+```
+
+Tidak ada variabel live yang diset.
+
+---
+
+## f. KARAKTER RUSAK
+
+Pindai 254 file ber-git (py, md, cfg, txt, yaml, yml, toml) untuk
+`\u3400-\u9fff`, `\uac00-\ud7af`, `\ufffd`, plus surrogate dan private use.
+
+```
+file diperiksa: 254
+temuan: 22
+```
+
+Semua 22 ada di dua tempat yang SENGAJA tidak disentuh:
+
+| Lokasi | Jumlah | Alasan |
+|---|---|---|
+| `research/` | 10 | `research/` di luar batas tugas |
+| `data_store/_snap*`, `constellation_*.py`, `count_crossings.py`, `critiques.txt` | 12 | snapshot dan skrip investigasi lama, bukan jalur produksi |
+
+Tidak ada temuan di `trading/`, `core/`, `run.py`, atau `tests/`.
+Temuan produksi yang sebelumnya ada sudah diperbaiki di `3a610d5`.
 
 Laporan sebelumnya menyatakan (h) selesai. Yang berikut tidak sesuai klaim itu.
 
