@@ -15,8 +15,10 @@ Menjalankan:
 
 import asyncio
 import logging
+import os
 import signal
 import sys
+import pathlib
 import threading
 from typing import List, Optional
 
@@ -38,7 +40,7 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 logging.getLogger("flask").setLevel(logging.ERROR)
 WSGIRequestHandler.log_request = _silence_request_log
 
-from core.config import get_config
+from core.config import LiveConfig, get_config
 from data.order_book_recorder import OrderBookRecorder
 from core.logger import (
     end_quiet_mode,
@@ -1099,6 +1101,173 @@ async def main():
         await app.shutdown()
 
 
+async def _fresh_reconcile():
+    """
+    Rekonsiliasi SEGAR terhadap bursa, untuk perintah pelepasan.
+
+    Mengembalikan `(clean, baris_detail)`.
+
+    `clean` hanya True kalau bursa TERBACA dan posisi lokal cocok dengan
+    posisi bursa. Bursa yang tidak terbaca menghasilkan `clean=False`,
+    bukan True: ketidaktahuan bukan persetujuan.
+
+    Pakai `LiveEngine.reconcile()` sungguhan, bukan implementasi ulang di
+    sini. Melacak ulang perbandingan posisi di tempat lain berarti
+    "rekonsiliasi bersih" yang diperiksa di layar operator belum tentu
+    sama dengan yang dimaksud bot.
+    """
+    from core.config import LiveConfig as _LC
+    from trading.live.client import LiveExchange
+    from trading.live.engine import LiveEngine
+    from trading.live.safety import SafetyGate, UnverifiedTracker
+
+    ex = LiveExchange(
+        os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""),
+        testnet=os.environ.get("TRADEBOT_TESTNET", "1") not in ("0", "false", ""),
+        account_address=os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS"),
+    )
+    ex.verify_agent_wallet()
+
+    engine = LiveEngine.__new__(LiveEngine)
+    engine.cfg = _LC()
+    engine.exchange = ex
+    engine.gate = SafetyGate(_LC(), env=dict(os.environ))
+    engine.positions = {}
+    engine.uncertain_orders = {}
+    engine.unverified = UnverifiedTracker(cfg=engine.cfg)
+
+    report = await engine.reconcile()
+    detail = [
+        "bursa terbaca: {}".format(report.get("state_known")),
+        "cocok: {}".format(report.get("matched")),
+        "hanya lokal: {}".format(report.get("only_local") or "tidak ada"),
+        "hanya bursa: {}".format(report.get("only_remote") or "tidak ada"),
+        "ukuran beda: {}".format(report.get("size_mismatch") or "tidak ada"),
+    ]
+    clean = bool(report.get("state_known")) and not any(
+        report.get(k) for k in ("only_local", "only_remote", "size_mismatch"))
+    return clean, detail
+
+
+def _operator_release() -> int:
+    """
+    `python run.py --release-kill-switch` — jalan melepas switch yang nyata.
+
+    `SafetyGate.operator_release()` sudah ada dan menguji keempat
+    syaratnya, tapi TIDAK ADA perintah yang memanggilnya. Fungsi yang
+    tidak punya jalur produksi adalah fungsi yang tidak ada.
+
+    Urutan di sini penting dan tidak boleh di-shortcut:
+
+      1. Baca state dari disk (state rusak tetap dianggap engaged).
+      2. Rekonsiliasi SEGAR terhadap bursa — bukan state lama.
+      3. Tampilkan hasil, lalu minta konfirmasi ketik.
+      4. Minta alasan. Alasan kosong ditolak.
+      5. Panggil `operator_release()`, yang menulis audit log.
+
+    Rekonsiliasi harus SEGAR. Melepas switch berdasarkan rekonsiliasi
+    yang berumur sejam lalu berarti melepas switch berdasarkan informasi
+    yang sudah bisa basi — persis kesalahan yang menyalakan switch.
+
+    Kode keluar:
+      0 — switch terlepas (atau memang sudah tidak aktif).
+      3 — ditolak: rekonsiliasi tidak bersih, alasan kosong, konfirmasi
+          salah, atau bursa tidak terbaca.
+    """
+    from trading.live.safety import SafetyGate
+
+    setup_logger()
+
+    # `state_path` diteruskan eksplisit supaya state persisted SELALU
+    # dibaca, apa pun isi TRADEBOT_LIVE.
+    #
+    # Tanpa ini, operator yang menjalankan perintah ini tanpa
+    # `TRADEBOT_LIVE=1` akan diberi tahu "tidak ada yang perlu dilepas"
+    # padahal kill switch-nya NYALA di disk. Itu jawaban yang salah di
+    # situasi yang paling penting: operator mengira sudah bebas padahal
+    # switch masih memblokirnya.
+    #
+    # Perintah ini memang tentang state persisted, jadi membaca state
+    # persisted selalu benar di sini.
+    gate = SafetyGate(LiveConfig(), env=dict(os.environ),
+                      state_path=pathlib.Path("data_store/live_counters.json"))
+    if not gate.engaged:
+        _print_safe("")
+        _print_safe("  Kill switch TIDAK aktif. Tidak ada yang perlu dilepas.")
+        return 0
+
+    _print_safe("")
+    _print_safe("  KILL SWITCH AKTIF. Melepasnya mengizinkan trading lagi.")
+    _print_safe("")
+    _print_safe("  Melepas switch TIDAK memperbaiki apa pun. Kalau penyebabnya")
+    _print_safe("  belum ditangani, switch menyala lagi — dan setiap kali bot")
+    _print_safe("  restart, posisi mungkin sudah berbeda.")
+    _print_safe("")
+    _print_safe("  Menjalankan rekonsiliasi SEGAR terhadap bursa...")
+
+    try:
+        clean, detail = asyncio.run(_fresh_reconcile())
+    except Exception as exc:  # noqa: BLE001
+        _print_safe("")
+        _print_safe("  Gagal menghubungi bursa: {}".format(exc))
+        _print_safe("  Kill switch TIDAK dilepas. Tidak bisa memastikan apa pun")
+        _print_safe("  berarti tidak boleh melepas switch.")
+        return 3
+
+    _print_safe("")
+    _print_safe("  Hasil rekonsiliasi:")
+    for line in detail:
+        _print_safe("    - {}".format(line))
+
+    if not clean:
+        _print_safe("")
+        _print_safe("  REKONSILIASI TIDAK BERSIH. Kill switch TIDAK dilepas.")
+        _print_safe("  Melepas switch sekarang mengembalikan bot ke order dengan")
+        _print_safe("  keyakinan salah soal posisi — kondisi yang memicu switch")
+        _print_safe("  di tempat pertama.")
+        return 3
+
+    _print_safe("")
+    _print_safe("  Rekonsiliasi BERSIH.")
+    _print_safe("")
+    _print_safe("  Untuk melanjutkan, ketik frasa ini persis:")
+    _print_safe("")
+    _print_safe("      {}".format(SafetyGate.RELEASE_CONFIRMATION_PHRASE))
+    _print_safe("")
+    try:
+        typed = input("  > ")
+    except EOFError:
+        typed = ""
+    _print_safe("")
+    _print_safe("  Alasan (wajib — masuk audit log):")
+    try:
+        reason = input("  > ").strip()
+    except EOFError:
+        reason = ""
+
+    if not reason:
+        _print_safe("")
+        _print_safe("  Alasan kosong. Kill switch TIDAK dilepas.")
+        return 3
+
+    try:
+        released = gate.operator_release(
+            reason=reason, typed_confirmation=typed, reconcile_clean=True)
+    except (PermissionError, ValueError, RuntimeError) as exc:
+        _print_safe("")
+        _print_safe("  Ditolak: {}".format(exc))
+        return 3
+
+    if released:
+        _print_safe("")
+        _print_safe("  KILL SWITCH SUDAH DILEPAS.")
+        _print_safe("  Audit: {}".format(gate.audit_path))
+    else:
+        _print_safe("")
+        _print_safe("  Kill switch tidak terlepas (tidak engaged?).")
+    return 0
+
+
 def _cli(argv=None) -> int:
     """
     Titik masuk proses. Mengembalikan KODE KELUAR.
@@ -1118,6 +1287,12 @@ def _cli(argv=None) -> int:
           lewat `_print_safe` supaya tidak ikut crash di Windows cp1252.
     """
     argv = sys.argv if argv is None else argv
+
+    # Perintah sekali: `python run.py --release-kill-switch`. Jalur ini
+    # menjalankan rekonsiliasi dan menulis audit log, tapi tidak pernah
+    # mengirim order dan tidak menjalankan agen maupun dashboard.
+    if "--release-kill-switch" in argv:
+        return _operator_release()
 
     # Mode sekali: `python run.py --repair-candles` membersihkan tabel
     # candles lalu keluar, tanpa menjalankan agen atau dashboard. Tidak ada
