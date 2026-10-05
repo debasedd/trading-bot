@@ -1508,6 +1508,24 @@ class LiveEngine:
                     await asyncio.sleep(interval)
                     continue
 
+                # Verifikasi agent wallet BERJALAN, bukan hanya sekali saat
+                # start. Agent bisa dicabut atau kedaluwarsa di tengah
+                # jalan, dan order yang ditandatangani agent yang sudah tidak
+                # berlaku hilang tanpa jejak.
+                #
+                # Kegagalan DI SINI tidak mematikan loop: agent dicabut
+                # adalah "tidak bisa memastikan", bukan divergensi posisi.
+                # Yang dilakukan: jeda order baru lewat
+                # `gate.record_error()`, yang sudah punya streak sendiri
+                # dan akan menyalakan kill switch setelah N kegagalan.
+                try:
+                    self.exchange.reverify_agent_if_due()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Verifikasi agent wallet gagal: %s — order baru "
+                        "dijeda", self.gate.redact(str(exc)))
+                    self.gate.record_error("verifikasi agent wallet gagal")
+
                 filled = await self.check_pending_fills()
                 for item in filled:
                     logger.warning(

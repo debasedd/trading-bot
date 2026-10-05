@@ -235,6 +235,156 @@ class TestAgentCheckIsReadOnly(unittest.TestCase):
                       "pesan harus tetap menyebut alamat yang disamarkan")
 
 
+class TestAgentExpiry(unittest.TestCase):
+    """
+    `extraAgents` mengembalikan `validUntil` per agent.
+
+    Agent kedaluwarsa tidak bisa men-sign. Order yang ditandatanganinya
+    hilang tanpa jejak — pola yang sama dengan agent yang tidak
+    terdaftar, tapi muncul JAUH setelah start.
+    """
+
+    def _now(self):
+        import time
+        return time.time()
+
+    def _agent(self, valid_until):
+        return {"name": "bot", "address": SIGNER, "validUntil": valid_until}
+
+    def test_expired_agent_rejected(self):
+        ex = _ExchangeDouble([self._agent(1000)],  # 1000 detik epoch = 1970
+                              account_address=MASTER, address=SIGNER)
+        with self.assertRaises(PreflightError) as ctx:
+            ex.verify_agent_wallet()
+        self.assertEqual(ctx.exception.code, PreflightError.AGENT_EXPIRED)
+
+    def test_expiring_within_margin_rejected(self):
+        """
+        Agent yang valid 10 menit lagi harus DITOLAK.
+
+        Order yang sedang dikirim bisa melewati batas itu. Margin
+        `AGENT_EXPIRY_MARGIN_SECONDS` ada persis untuk ini: kedaluwarsa
+        dalam 5 menit bukan "masih aman".
+        """
+        ex = _ExchangeDouble([self._agent(self._now() + 600)],
+                              account_address=MASTER, address=SIGNER)
+        with self.assertRaises(PreflightError) as ctx:
+            ex.verify_agent_wallet()
+        self.assertEqual(ctx.exception.code, PreflightError.AGENT_EXPIRED)
+
+    def test_valid_far_in_future_passes(self):
+        ex = _ExchangeDouble([self._agent(self._now() + 30 * 86400)],
+                              account_address=MASTER, address=SIGNER)
+        ex.verify_agent_wallet()
+
+    def test_milliseconds_are_normalised(self):
+        """
+        Satuan milidetik harus dibaca sebagai milidetik.
+
+        Kalau salah baca, `1700000000000` (ms) dianggap 1700000000000
+        detik = tahun 55927, sehingga agent yang sudah kedaluwarsa terbaca
+        aman. Tidak ada yang mengetahuinya karena pemeriksaan selalu
+        "lulus".
+        """
+        now_ms = int(self._now() * 1000)
+        ex = _ExchangeDouble([self._agent(now_ms - 60_000)],  # 60 detik lalu
+                              account_address=MASTER, address=SIGNER)
+        with self.assertRaises(PreflightError) as ctx:
+            ex.verify_agent_wallet()
+        self.assertEqual(ctx.exception.code, PreflightError.AGENT_EXPIRED)
+
+    def test_missing_validuntil_is_not_treated_as_expired(self):
+        """
+        `validUntil` yang tidak ada = TIDAK bisa dinilai, bukan kedaluwarsa.
+
+        Menolak agent yang jelas masih beres hanya karena bursa tidak
+        mengirim field-nya adalah penolakan palsu — dan itu lebih buruk
+        daripada memeriksa kedaluwarsa yang dilewati.
+        """
+        ex = _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER}],
+            account_address=MASTER, address=SIGNER)
+        ex.verify_agent_wallet()
+
+    def test_unparseable_validuntil_is_not_treated_as_expired(self):
+        ex = _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER, "validUntil": "bukan-angka"}],
+            account_address=MASTER, address=SIGNER)
+        ex.verify_agent_wallet()
+
+    def test_zero_validuntil_is_not_treated_as_expired(self):
+        ex = _ExchangeDouble([self._agent(0)],
+                              account_address=MASTER, address=SIGNER)
+        ex.verify_agent_wallet()
+
+
+class TestPeriodicReverification(unittest.TestCase):
+    """
+    Verifikasi agent harus BERJALAN, bukan sekali saat start.
+
+    Agent bisa dicabut dari master kapan saja. Verifikasi satu kali hanya
+    membuktikan keadaan saat itu.
+    """
+
+    def _exchange(self):
+        import time
+        return _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER,
+              "validUntil": time.time() + 30 * 86400}],
+            account_address=MASTER, address=SIGNER)
+
+    def test_first_check_is_always_due(self):
+        ex = self._exchange()
+        self.assertTrue(ex.agent_verification_due())
+
+    def test_not_due_immediately_after_success(self):
+        ex = self._exchange()
+        ex.reverify_agent_if_due()
+        self.assertFalse(ex.agent_verification_due(),
+                         "verifikasi kedua langsung due")
+        self.assertFalse(ex.reverify_agent_if_due(),
+                         "reverify_agent_if_due() jalan padahal belum due")
+
+    def test_due_again_after_interval(self):
+        import time
+        ex = self._exchange()
+        ex.reverify_agent_if_due()
+        later = time.time() + ex.AGENT_REVERIFY_SECONDS + 1
+        self.assertTrue(ex.agent_verification_due(now=later))
+
+    def test_reverify_raises_when_agent_deregistered(self):
+        """
+        Agent yang dicabut di tengah jalan harus terdeteksi.
+
+        Ini yang tidak tertangkap oleh verifikasi sekali saat start: agent
+        dicabut setelah bot berjalan sejam, dan tanpa pengecekan ulang
+        order berikutnya hilang tanpa jejak.
+        """
+        import time
+        ex = _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER,
+              "validUntil": time.time() + 30 * 86400}],
+            account_address=MASTER, address=SIGNER)
+        ex.reverify_agent_if_due()  # verifikasi pertama, agent masih ada
+
+        # Agent dicabut dari master.
+        ex._info._agents = []
+
+        # Paksa waktu sudah lewat interval, supaya verifikasi due.
+        ex._agent_verified_at = time.time() - ex.AGENT_REVERIFY_SECONDS - 1
+
+        with self.assertRaises(PreflightError) as ctx:
+            ex.reverify_agent_if_due()
+        self.assertEqual(ctx.exception.code,
+                         PreflightError.AGENT_NOT_REGISTERED)
+
+    def test_verification_interval_is_configurable_value(self):
+        """Interval dan margin adalah konstanta yang bisa dibaca."""
+        ex = self._exchange()
+        self.assertGreater(LiveExchange.AGENT_REVERIFY_SECONDS, 0)
+        self.assertGreater(LiveExchange.AGENT_EXPIRY_MARGIN_SECONDS, 0)
+
+
 class TestPreflightCoversAgentMismatch(unittest.TestCase):
     """`preflight()` harus menjalankan cek agent, bukan hanya bentuk alamat."""
 

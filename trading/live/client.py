@@ -21,6 +21,8 @@ urutan menghasilkan tanda tangan yang valid tapi untuk aksi yang salah.
 from __future__ import annotations
 
 import math
+import time
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -62,6 +64,7 @@ class PreflightError(RuntimeError):
     AGENT_NOT_REGISTERED = "agent_not_registered"
     AGENT_CHECK_FAILED = "agent_check_failed"
     ACCOUNT_APPEARS_EMPTY = "account_appears_empty"
+    AGENT_EXPIRED = "agent_expired"
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -191,6 +194,16 @@ class LiveExchange:
     Dibuat SATU KALI dan dipakai bersama. Immutable kecuali leverage yang
     memang harus diubah per simbol.
     """
+
+    #: Margin sebelum kedaluwarsa. Agent yang masih valid beberapa menit
+    #: lagi TIDAK boleh dipakai: order yang sedang dikirim bisa melewati
+    #: batas itu, dan order yang hilang tanpa jejak tidak pernah ketahuan.
+    AGENT_EXPIRY_MARGIN_SECONDS = 3600.0
+
+    #: Kapan verifikasi agent diulang saat bot berjalan. Verifikasi sekali
+    #: saat start hanya membuktikan keadaan saat itu; agent bisa dicabut
+    #: kapan saja.
+    AGENT_REVERIFY_SECONDS = 900.0
 
     def __init__(
         self,
@@ -472,11 +485,14 @@ class LiveExchange:
                 .format(type(exc).__name__)
             ) from exc
 
-        registered = {
-            str(a.get("address") or "").strip().lower()
-            for a in (agents or [])
-            if isinstance(a, dict)
-        }
+        registered = {}
+        for agent in (agents or []):
+            if not isinstance(agent, dict):
+                continue
+            address = str(agent.get("address") or "").strip().lower()
+            if address:
+                registered[address] = agent
+
         if signer not in registered:
             raise PreflightError(
                 PreflightError.AGENT_NOT_REGISTERED,
@@ -489,10 +505,95 @@ class LiveExchange:
                                  mask_address(master))
             )
 
+        # MASA BERLAKU. `extraAgents` mengembalikan `validUntil` per agent.
+        #
+        # Unit-nya TIDAK didokumentasikan — SDK hanya menulis `"validUntil":
+        # int`. Jadi satuan dideteksi dari besarannya, bukan diasumsikan:
+        # nilai di atas 1e11 pasti milidetik (sekarang ~1.7e12), di bawah
+        # itu detik. Salah membaca satuan membuat pemeriksaan kedaluwarsa
+        # selalu benar atau selalu salah, dan tidak ada yang mengetahuinya.
+        valid_until = self._agent_valid_until_seconds(
+            registered[signer].get("validUntil"))
+        if valid_until is not None:
+            now = datetime.now(timezone.utc).timestamp()
+            margin = self.AGENT_EXPIRY_MARGIN_SECONDS
+            if valid_until <= now:
+                raise PreflightError(
+                    PreflightError.AGENT_EXPIRED,
+                    "Agent wallet ({}) sudah KEDALUWARSA. Order yang "
+                    "ditandatangani tidak akan sampai ke bursa — hilang "
+                    "tanpa jejak, dan itu baru ketahuan saat order hilang. "
+                    "Daftarkan ulang signer lewat ApproveAgent."
+                    .format(mask_address(self.address)))
+            if valid_until <= now + margin:
+                raise PreflightError(
+                    PreflightError.AGENT_EXPIRED,
+                    "Agent wallet ({}) kedaluwarsa dalam {:.0f} detik "
+                    "(margin {:.0f} detik). Order yang sedang dikirim bisa "
+                    "melewati batas itu dan hilang tanpa jejak. Perpanjang "
+                    "daftarnya sebelum melanjutkan.".format(
+                        mask_address(self.address),
+                        valid_until - now, margin))
+
         logger.info(
             "Agent wallet terverifikasi: signer %s terdaftar di master %s",
             mask_address(self.address), mask_address(master),
         )
+
+    @staticmethod
+    def _agent_valid_until_seconds(raw) -> Optional[float]:
+        """
+        Ubah `validUntil` menjadi detik-since-epoch, atau None.
+
+        None berarti "tidak bisa dinilai" — `validUntil` yang tidak ada,
+        nol, atau tidak bisa diparse. Itu TIDAK sama dengan "tidak
+        kedaluwarsa":obot tidak tahu, jadi pemeriksaan kedaluwarsa dilewati
+        demi mencegah penolakan palsu pada agent yang sebenarnya sah.
+
+        Satu-satunya alasan None dipakai:鞘 menolak agent yang jelas masih
+        beres hanya karena bursa tidak mengirim field-nya.
+        """
+        if raw is None or raw == "":
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        # > 1e11 detik = 3170 tahun. Pasti milidetik.
+        return value / 1000.0 if value > 1e11 else value
+
+    def agent_verification_due(self, now: Optional[float] = None) -> bool:
+        """
+        True kalau verifikasi agent sudah harus diulang.
+
+        Percakapan bukan bagian dari rekonsiliasi, jadi ini dipanggil dari
+        loop supaya agent yang dicabut di tengah jalan ikut terdeteksi.
+        """
+        now = time.time() if now is None else now
+        last = getattr(self, "_agent_verified_at", None)
+        if last is None:
+            return True
+        return (now - last) >= self.AGENT_REVERIFY_SECONDS
+
+    def mark_agent_verified(self, now: Optional[float] = None) -> None:
+        """Catat kapan verifikasi terakhir berhasil."""
+        self._agent_verified_at = time.time() if now is None else now
+
+    def reverify_agent_if_due(self) -> bool:
+        """
+        Verifikasi ulang agent kalau sudah waktunya. True kalau dicek.
+
+        Melempar `PreflightError` kalau agent hilang, kedaluwarsa, atau
+        tidak bisa diverifikasi — pemanggil yang memutuskan算什么
+        perlakuannya.
+        """
+        if not self.agent_verification_due():
+            return False
+        self.verify_agent_wallet()
+        self.mark_agent_verified()
+        return True
 
     def spot_equity_is_nonzero(self) -> Optional[bool]:
         """
