@@ -328,26 +328,37 @@ class SafetyGate:
         # bisa lupa dan menulis audit ke file produksi.
         self.audit_path = self.state_path.with_name(
             self.state_path.stem + "_audit.jsonl")
-        if state_path is not None or str(self.env.get("TRADEBOT_LIVE", "")) in (
-                "1", "true", "yes"):
-            # Hanya muat dari file kalau live memang diaktifkan, supaya
-            # paper trading tidak pernah menyentuh file apa pun.
-            self.counters.load(self.state_path)
-            # File mungkin berisi state hari yang sudah lewat. Setelah
-            # load, cek ulang supaya angka basi tidak dipakai.
-            self.counters.rollover_if_needed()
-            # FAIL CLOSED: file yang ada tapi tidak terbaca berarti angka
-            # batas hari ini tidak diketahui, dan batas yang tidak diketahui
-            # berarti tidak ada batas.
-            #
-            # Dulu kondisi ini hanya menambah blocker
-            # `COUNTER_STATE_UNREADABLE`, jadi `engaged` tetap False dan
-            # `health_check()` melaporkan `kill_switch: False` sementara
-            # gerbang sebenarnya menolak setiap order — laporan yang
-            # berlawanan dengan kenyataan.
-            if not self.counters.readable:
-                self.counters.engaged = True
-        else:
+        # STATE KILL SWITCH SELALU DIBACA DARI DISK.
+        #
+        # Sebelumnya file hanya dibaca kalau `TRADEBOT_LIVE` diset. Itu
+        # benar untuk sebagian hal (paper trading tidak boleh menyentuh
+        # file produksi), tapi SALAH untuk satu hal yang paling penting:
+        # kill switch aktif yang tidak terbaca berarti bot restarted tanpa
+        # TRADEBOT_LIVE (cronjob salah, env hilang, tangan salah) lalu
+        # berjalan seolah tidak ada yang menyalakannya.
+        #
+        # Fail closed: kalau file ADA, isinya dipakai apa pun isi
+        # environment. Kalau file TIDAK ada, tidak ada yang perlu
+        # dipulihkan dan `engaged` mulai False.
+        #
+        # Test terisolasi tetap aman karena mereka mengarahkan
+        # `state_path` ke tmp, jadi tidak mewarisi file produksi.
+        self.counters.load(self.state_path)
+        # File mungkin berisi state hari yang sudah lewat. Setelah load,
+        # cek ulang supaya angka basi tidak dipakai.
+        self.counters.rollover_if_needed()
+
+        # FAIL CLOSED: file yang ada tapi tidak terbaca berarti angka batas
+        # hari ini tidak diketahui, dan batas yang tidak diketahui berarti
+        # tidak ada batas.
+        #
+        # Dulu kondisi ini hanya menambah blocker `COUNTER_STATE_UNREADABLE`,
+        # jadi `engaged` tetap False dan `health_check()` melaporkan
+        # `kill_switch: False` sementara gerbang sebenarnya menolak setiap
+        # order — laporan yang berlawanan dengan kenyataan.
+        if self.state_path.exists() and not self.counters.readable:
+            self.counters.engaged = True
+        elif not self.state_path.exists():
             # Tanpa file, `engaged` harus mulai dari False dan TIDAK boleh
             # menyalin apa pun dari disk. Ini yang membuat test terisolasi:
             # test yang meng-inject `env` sendiri tidak pernah menyentuh
@@ -422,10 +433,13 @@ class SafetyGate:
 
         Mengembalikan True kalau switch benar-benar terlepas.
 
-        `disengage_kill_switch()` tetap ada untuk pemakaian internal, tapi
-        TIDAK menyentuh state `engaged` di disk dan tidak menulis audit log
-        — itu bukan pelepasan, itu hanya perubahan lokal yang hilang saat
-        restart.
+        INI SATU-SATUNYA jalan melepas kill switch di sistem ini.
+
+        `disengage_kill_switch()` pernah ada dan sudah DIHAPUS. Ia tidak
+        menulis audit log dan tidak menyentuh state `engaged` di disk, jadi
+        melepasnya hanya perubahan lokal yang hilang saat restart — switch
+        akan kembali menyala tanpa ada yang memutuskan. Fungsi yang tidak
+        ada lebih baik daripada fungsi yang bisa dipakai tanpa jejak.
         """
         if not self.engaged:
             logger.warning(
@@ -717,40 +731,6 @@ class SafetyGate:
         # jadi tanpa baris ini, kill switch yang dinyalakan karena
         # perlindungan hilang akan hilang lagi saat restart.
         self.persist()
-
-    def disengage_kill_switch(self, reason: str) -> bool:
-        """
-        Lepas kill switch. Mengembalikan True kalau benar-benar terlepas.
-
-        SENGaja tidak menghapus dirinya sendiri: satu-satunya pemanggil
-        yang sah adalah operator, lewat `TRADEBOT_LIVE_KILL_SWITCH=0`
-        atau perintah TUI. Tidak ada kode produksi yang memanggil ini.
-
-        Melepas RESETJUMLAH error beruntun, karena itu yang menyalakan
-        switch di `record_error`. Kalau tidak, `can_send` akan langsung
-        menyalakannya lagi pada error berikutnya dan operator melihat
-        switch "mati" selama satu order sebelum menyala lagi — lebih buruk
-        daripada tidak melepasnya sama sekali, karena ia menyalakan
-        keyakinan salah bahwa masalahnya beres.
-        """
-        if not self.engaged:
-            logger.warning(
-                "Permintaan lepas kill switch diabaikan: switch sudah "
-                "tidak aktif."
-            )
-            return False
-
-        logger.warning(
-            "KILL SWITCH dilepas oleh operator: %s. Reset %d error "
-            "beruntun. Pastikan penyebabnya sudah diperbaiki sebelum "
-            "melanjutkan — melepas switch TIDAK memperbaiki apa pun.",
-            reason, self.counters.consecutive_errors,
-        )
-        self.engaged = False
-        self.counters.consecutive_errors = 0
-        self.persist()
-        return True
-
     # ── Pencatatan hasil ───────────────────────────────────────────────
     #
     # Method-method ini di SINI, bukan di `DayCounters`: yang SISTEM yang

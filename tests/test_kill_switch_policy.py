@@ -31,6 +31,7 @@ Yang diuji:
 
 import json
 import pathlib
+from datetime import datetime, timezone
 import sys
 import tempfile
 import unittest
@@ -407,7 +408,108 @@ class TestEnvCannotReleaseKillSwitch(unittest.TestCase):
                         "kill switch tidak bertahan melewati restart")
 
 
-class TestOperatorReleaseRequiresAllFour(unittest.TestCase):
+class TestStateAlwaysReadFromDisk(unittest.TestCase):
+    """
+    Kill switch dari disk HARUS terbaca apa pun isi environment.
+
+    Sebelumnya file hanya dibaca kalau `TRADEBOT_LIVE=1`. Konsekuensinya:
+    bot yang restart tanpa env itu (cronjob salah, env hilang, tangan
+    salah) berjalan seolah tidak ada yang menyalakannya — persis
+    keadaan yang membuat fail-closed kehilangan makna.
+    """
+
+    def _write_state(self, tmpdir, **fields):
+        import pathlib
+        state = pathlib.Path(tmpdir) / "live_counters.json"
+        payload = {"date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                   "engaged": True, "orders_sent": 0,
+                   "realized_pnl": 0.0, "consecutive_errors": 0}
+        payload.update(fields)
+        state.write_text(json.dumps(payload), encoding="utf-8")
+        return state
+
+    def test_env_not_set_still_reads_engaged_from_disk(self):
+        """
+        `env={}` — TRADEBOT_LIVE tidak diset sama sekali.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            state = self._write_state(d)
+            gate = SafetyGate(LiveConfig(), env={}, state_path=state)
+            self.assertTrue(gate.engaged,
+                            "kill switch aktif di disk tapi TIDAK terbaca "
+                            "karena TRADEBOT_LIVE tidak diset")
+
+    def test_tradebot_live_zero_still_reads_engaged_from_disk(self):
+        """`TRADEBOT_LIVE=0` tidak boleh membuat switch di disk diabaikan."""
+        with tempfile.TemporaryDirectory() as d:
+            state = self._write_state(d)
+            gate = SafetyGate(LiveConfig(),
+                              env={"TRADEBOT_LIVE": "0"}, state_path=state)
+            self.assertTrue(gate.engaged,
+                            "TRADEBOT_LIVE=0 membuat kill switch terlewat")
+
+    def test_missing_file_starts_unengaged(self):
+        """Tidak ada file = tidak ada yang perlu dipulihkan."""
+        import pathlib
+        with tempfile.TemporaryDirectory() as d:
+            state = pathlib.Path(d) / "tidak_ada.json"
+            gate = SafetyGate(LiveConfig(), env={}, state_path=state)
+            self.assertFalse(gate.engaged)
+
+    def test_corrupt_file_still_engages(self):
+        """
+        File ada tapi rusak = batas hari ini tidak diketahui.
+
+        Batas yang tidak diketahui berarti tidak ada batas, jadi switch
+        menyala — apa pun isi environment.
+        """
+        import pathlib
+        with tempfile.TemporaryDirectory() as d:
+            state = pathlib.Path(d) / "live_counters.json"
+            state.write_text("{ ini bukan json", encoding="utf-8")
+            gate = SafetyGate(LiveConfig(), env={}, state_path=state)
+            self.assertTrue(gate.engaged,
+                            "file state rusak tapi switch TIDAK menyala")
+
+    def test_disengage_has_no_other_caller(self):
+        """
+        SATU-SATUNYA jalan melepas switch adalah `operator_release()`.
+
+        `disengage_kill_switch()` dihapus karena tidak pernah dipanggil
+        dari produksi: ia tidak menulis audit log dan tidak menyentuh
+        state `engaged` di disk, jadi melepasnya adalah perubahan lokal
+        yang hilang saat restart.
+        """
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for name in ("disengage_kill_switch",):
+            hits = []
+            for f in list((root / "trading").rglob("*.py")) + [root / "run.py"]:
+                text = f.read_text(encoding="utf-8", errors="replace")
+                for n, line in enumerate(text.splitlines(), 1):
+                    stripped = line.strip()
+                    if name in line and not stripped.startswith("#"):
+                        # docstring masih boleh menyebut; pemanggil tidak
+                        if "def " + name in line:
+                            continue
+                        # sebutan di dalam docstring bukan pemanggil
+                        if stripped.startswith(chr(96)) or "()" in line and not stripped.endswith(")"):
+                            continue
+                        if '"' + name + '"' in line or "'" + name + "'" in line:
+                            continue
+                        hits.append("%s:%d: %s" % (f.name, n, line.strip()[:70]))
+            self.assertEqual(hits, [],
+                             "ada pemanggil %s di luar operator_release:\n%s"
+                             % (name, "\n".join(hits)))
+
+    def test_method_no_longer_exists(self):
+        """`disengage_kill_switch` dihapus, bukan hanya dibuang pemanggilnya."""
+        self.assertFalse(
+            hasattr(SafetyGate, "disengage_kill_switch"),
+            "SafetyGate masih punya disengage_kill_switch — jalur pelepasan "
+            "kedua masih mungkin terbuka")
+
+
+class TestReleaseRequiresAllFour(unittest.TestCase):
     """Empat syarat, semuanya wajib."""
 
     def _engaged_gate(self):
