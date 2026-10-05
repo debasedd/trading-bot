@@ -150,3 +150,7 @@ _per_file_gate.py
 # normal file ini terhapus sendiri; ia hanya tinggal kalau proses
 # killed di tengah jalan.
 tests/_probe_tmp/
+mutants/
+_mm_*.sh
+_sc_safety.cfg
+_mm_results*.txt
