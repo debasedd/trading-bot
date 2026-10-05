@@ -34,10 +34,12 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from core.config import LiveConfig
+from trading.live.engine import LiveEngine
 from trading.live.safety import DayCounters, SafetyGate
 
 
@@ -198,6 +200,133 @@ class TestUnreadableStateEngagesKillSwitch(unittest.TestCase):
         gate = _gate(path)
         self.assertFalse(gate.engaged,
                          "state yang sehat tidak boleh menyalakan switch")
+
+
+class TestHealthCheckKeepsWatchingWhileEngaged(unittest.TestCase):
+    """
+    Kill switch menghentikan ORDER, bukan PENGLIHATAN.
+
+    `health_check()` sebelumnya `return` begitu switch menyala. Reads-
+    only reconciliation dan alert ikut berhenti — persis ketika posisi
+    paling mungkin berubah, yaitu saat ada yang memasang trigger-nya atau
+    operator melakukan order manual di luar bot.
+
+    Yang harus tetap berlaku:
+      * bursa tetap dibaca
+      * divergensi tetap dilaporkan di `problems`
+      * `ok` tetap False
+      * switch TIDAK dinyalakan ulang (hanya menambah noise)
+    """
+
+    def _engine(self, remote_coins=(), local_coins=()):
+        import asyncio as _asyncio
+
+        from trading.live.engine import LiveEngine, LivePosition
+
+        engine = LiveEngine.__new__(LiveEngine)
+        from core.config import LiveConfig
+        engine.cfg = LiveConfig()
+        engine.positions = {
+            c: LivePosition(symbol=c, coin=c, side="LONG", size=0.5,
+                            entry_price=100.0, stop_loss=0.0,
+                            take_profit=0.0, leverage=5)
+            for c in local_coins
+        }
+
+        class _Exchange:
+            query_address = "0x5972698398d8c5bbe67c0db74906236691020417"
+
+            def get_account_state(self):
+                return {"assetPositions": [
+                    {"type": "oneWay",
+                     "position": {"coin": c, "szi": "0.5",
+                                  "entryPx": "100"}}
+                    for c in remote_coins],
+                    "marginSummary": {"accountValue": "1000",
+                                      "withdrawable": "1000"}}
+
+            def open_orders(self):
+                return []
+
+        engine.exchange = _Exchange()
+
+        class _Info:
+            def meta(self):
+                return {"universe": [{"name": "BTC"}, {"name": "ETH"}]}
+
+            def user_fills(self, *a, **kw):
+                return []
+
+            def frontend_open_orders(self, *a, **kw):
+                return []
+
+        engine.exchange.info = _Info()
+        return engine
+
+    def test_still_reads_exchange_while_engaged(self):
+        """Bursa tetap dibaca meski switch menyala."""
+        import asyncio as _asyncio
+
+        eng = self._engine(remote_coins=("BTC",))
+        eng.gate = _gate(_engaged_state())
+        self.assertTrue(eng.gate.engaged, "switch harus menyala sebelum tes")
+
+        with patch.object(LiveEngine, "poll_exchange_fills",
+                          new=_async_empty_fills()):
+            health = _asyncio.run(eng.health_check())
+
+        self.assertTrue(health["reachable"],
+                        "bursa tidak dibaca saat switch menyala — bot jadi "
+                        "buta tepat saat posisi paling mungkin berubah")
+        self.assertFalse(health["ok"])
+
+    def test_still_reports_divergence_while_engaged(self):
+        """
+        Divergensi yang terjadi SETELAH switch menyala harus terlihat.
+
+        Ini inti perubahan: switch sudah aktif, tapi posisi lokal dan bursa
+        tetap dibandingkan, dan selisihnya muncul di `problems`.
+        """
+        import asyncio as _asyncio
+
+        eng = self._engine(remote_coins=("ETH",), local_coins=("BTC",))
+        eng.gate = _gate(_engaged_state())
+
+        with patch.object(LiveEngine, "poll_exchange_fills",
+                          new=_async_empty_fills()):
+            health = _asyncio.run(eng.health_check())
+
+        joined = " | ".join(health["problems"])
+        self.assertIn("kill switch aktif", joined)
+        self.assertTrue(
+            "ETH" in joined or "BTC" in joined,
+            "divergensi posisi tidak dilaporkan saat switch menyala: %r"
+            % health["problems"],
+        )
+
+    def test_does_not_re_engage(self):
+        """Switch yang sudah aktif tidak boleh dinyalakan ulang."""
+        import asyncio as _asyncio
+
+        eng = self._engine(remote_coins=("BTC",), local_coins=("BTC",))
+        eng.gate = _gate(_engaged_state())
+        engaged_calls = []
+        eng.gate.engage_kill_switch = lambda r: engaged_calls.append(r)
+
+        with patch.object(LiveEngine, "poll_exchange_fills",
+                          new=_async_empty_fills()):
+            _asyncio.run(eng.health_check())
+
+        self.assertEqual(engaged_calls, [],
+                         "switch yang sudah menyala dinyalakan ulang — "
+                         "itu hanya menambah log, bukan informasi")
+
+
+def _async_empty_fills():
+    """`poll_exchange_fills` async yang mengembalikan daftar kosong."""
+    async def _stub(self):
+        return []
+    return _stub
 
 
 if __name__ == "__main__":

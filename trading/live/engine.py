@@ -1345,9 +1345,22 @@ class LiveEngine:
             "closed_by_exchange": [],
         }
 
-        if self.gate.engaged:
+        # KILL SWITCH TIDAK MENGHENTIKAN PEMBACAAN.
+        #
+        # Versi sebelumnya `return health` begitu switch menyala, supaya log
+        # tidak membanjiri. Konsekuensinya: rekonsiliasi berhenti berjalan
+        # tepat ketika posisi justru paling mungkin berubah — ada yang
+        # memasang trigger-nya, atau operator melakukan order manual di luar
+        # bot. Bot yang buta saat posisi bergerak adalah bot yang buta saat
+        # keadaannya paling berbahaya.
+        #
+        # Yang berubah hanya perlakuan AKHIR, bukan pekerjaannya:
+        # rekonsiliasi read-only tetap jalan, alert tetap jalan, dan switch
+        # tetap menyala. Switch tidak dinyalakan ulang di sini — kalau
+        # sudah aktif, mengulanginya hanya menambah noise.
+        already_engaged = self.gate.engaged
+        if already_engaged:
             health["problems"].append("kill switch aktif")
-            return health
 
         # Fill dibaca LEBIH DAHULU. Ini yang membedakan "trigger kita
         # yang fire" dari "posisi hilang entah kenapa".
@@ -1449,9 +1462,15 @@ class LiveEngine:
                 "Order resting %s tanpa posisi lokal; dibiarkan karena "
                 "GTC yang belum terisi memang begitu.", coin)
 
+        # `problems` sudah berisi "kill switch aktif" kalau switch menyala, jadi
+        # `reconciled` otomatis False dalam kasus itu — dan itu benar:
+        # sistem yang sedang dihentikan memang tidak boleh dilaporkan sehat.
         health["reconciled"] = not health["problems"]
         health["ok"] = health["reachable"] and health["reconciled"]
-        if not health["ok"]:
+        if not health["ok"] and not already_engaged:
+            # Switch yang sudah menyala TIDAK dinyalakan ulang. Mengulangi
+            # hanya menambah log; yang dibutuhkan operator adalah laporan
+            # posisi terbaru, dan itu sudah ada di `problems`.
             self.gate.engage_kill_switch(
                 "health check gagal: " + "; ".join(health["problems"][:3]))
         return health
