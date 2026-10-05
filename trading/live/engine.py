@@ -22,6 +22,7 @@ mengubah apa pun di sini:
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -29,7 +30,12 @@ from typing import Any, Callable, Dict, List, Optional
 from core.config import LiveConfig
 from core.logger import get_logger
 from trading.live.client import LiveExchange, OrderOutcome
-from trading.live.safety import Blocker, OrderRequest, SafetyGate
+from trading.live.safety import (
+    Blocker,
+    OrderRequest,
+    SafetyGate,
+    UnverifiedTracker,
+)
 
 logger = get_logger("live_engine")
 
@@ -356,6 +362,11 @@ class LiveEngine:
     #:
     #: Peta: cloid -> dict berisi coin, symbol, ukuran, dan waktu kirim.
     uncertain_orders: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    #: Keadaan "tidak bisa pastikan": berapa kegagalan beruntun dan sejak
+    #: kapan. Dipakai `run_loop` untuk menjeda order baru dan menaikkan
+    #: kill switch setelah policy terlampaui.
+    unverified: UnverifiedTracker = field(default_factory=UnverifiedTracker)
 
     # ── Rekonsiliasi ───────────────────────────────────────────────────
 
@@ -1475,6 +1486,53 @@ class LiveEngine:
                 "health check gagal: " + "; ".join(health["problems"][:3]))
         return health
 
+    def _note_unverified(self, reason: str) -> None:
+        """
+        Catat satu kegagalan "tidak bisa memastikan" dan jeda order baru.
+
+        Kill switch hanya menyala setelah policy terlampaui: N kegagalan
+        beruntun atau lewat batas waktu. SEBELUM itu, order baru dijeda
+        dan bot mencoba lagi dengan backoff.
+
+        Melewatkan pemanggilan jeda di sini berarti bot tetap mengirim
+        order tanpa tahu apa yang terjadi di bursa.
+        """
+        now = time.time()
+        should_stop = self.unverified.record_failure(now, reason)
+        if should_stop and not self.gate.engaged:
+            self.gate.engage_kill_switch(
+                "tidak bisa memastikan berulang: %s" % self.unverified.summary())
+            logger.error(
+                "KILL SWITCH dinyalakan: %s (batas policy terlampaui)",
+                self.unverified.summary())
+        elif self.unverified.consecutive == 1:
+            # Alert sejak kegagalan PERTAMA, bukan setelah ketiga: kalau
+            # bot akan berhenti dalam tiga percobaan, operator harus tahu
+            # dari percobaan pertama.
+            logger.error(
+                "Order baru DIJEDA — tidak bisa memastikan: %s", reason)
+
+    def _note_verified(self) -> None:
+        """Pembacaan berhasil: jeda dilepas dan streak direset."""
+        if self.unverified.is_paused():
+            logger.info(
+                "Pembacaan bursa berhasil — jeda order baru dilepas")
+        self.unverified.record_success()
+
+    def _unverified_delay(self, interval: float) -> float:
+        """
+        Delay sebelum percobaan berikutnya saat dalam keadaan jeda.
+
+        Memakai backoff dari config (10/30/60 detik). Kalau backoff sudah
+        habis — lebih banyak kegagalan dari jumlah entri — pakai
+        `interval`, bukan 0: retry tanpa jeda membanjiri bursa tepat saat
+        ia sedang menolak.
+        """
+        delay = self.unverified.next_delay()
+        if delay is None:
+            return max(interval, 1.0)
+        return max(delay, 1.0)
+
     async def run_loop(self, interval: float = 5.0,
                        on_decision=None) -> None:
         """
@@ -1502,6 +1560,37 @@ class LiveEngine:
         while True:
             try:
                 health = await self.health_check()
+
+                # KEBIJAKAN "TIDAK BISA MEMASTIKAN"
+                #
+                # Bursa terbaca atau tidak menentukan cabang mana yang
+                # dipakai:
+                #
+                #   tidak terbaca -> "tidak bisa memastikan": jeda order
+                #     baru sejak kegagalan pertama, coba ulang dengan
+                #     backoff, dan baru naik ke kill switch setelah N
+                #     kegagalan beruntun ATAU lewat batas waktu.
+                #
+                #   terbaca tapi tidak sinkron -> DIVERGENSI: kill switch
+                #     dinyalakan di dalam `health_check()`, tanpa lewat
+                #     sini.
+                #
+                # Memisahnya di sini, bukan di dalam `health_check()`,
+                # karena keduanya berbeda: "tidak terbaca" sering
+                # sementara, "tidak sinkron" selalu berarti kita salah.
+                # Kill switch untuk yang sementara melatih operator menekan
+                # tombol yang seharusnya jarang dipakai.
+                if not health["reachable"]:
+                    self._note_unverified(
+                        "bursa tidak terbaca: "
+                        + "; ".join(health["problems"][:2]))
+                    await asyncio.sleep(self._unverified_delay(interval))
+                    continue
+
+                # Pembacaan berhasil: jeda harus hilang. Melewati baris ini
+                # berarti bot tetap dijeda setelah bursa pulih.
+                self._note_verified()
+
                 if not health["ok"]:
                     logger.error("Health check gagal: %s",
                                  health["problems"][:3])
@@ -1510,21 +1599,19 @@ class LiveEngine:
 
                 # Verifikasi agent wallet BERJALAN, bukan hanya sekali saat
                 # start. Agent bisa dicabut atau kedaluwarsa di tengah
-                # jalan, dan order yang ditandatangani agent yang sudah tidak
-                # berlaku hilang tanpa jejak.
+                # jalan, dan order yang ditandatangani agent yang sudah
+                # tidak berlaku hilang tanpa jejak.
                 #
-                # Kegagalan DI SINI tidak mematikan loop: agent dicabut
-                # adalah "tidak bisa memastikan", bukan divergensi posisi.
-                # Yang dilakukan: jeda order baru lewat
-                # `gate.record_error()`, yang sudah punya streak sendiri
-                # dan akan menyalakan kill switch setelah N kegagalan.
+                # Kegagalan DI SINI adalah "tidak bisa memastikan", bukan
+                # divergensi, jadi lewat tracker yang sama.
                 try:
                     self.exchange.reverify_agent_if_due()
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Verifikasi agent wallet gagal: %s — order baru "
-                        "dijeda", self.gate.redact(str(exc)))
-                    self.gate.record_error("verifikasi agent wallet gagal")
+                    self._note_unverified(
+                        "verifikasi agent wallet gagal: "
+                        + self.gate.redact(str(exc)))
+                else:
+                    self._note_verified()
 
                 filled = await self.check_pending_fills()
                 for item in filled:

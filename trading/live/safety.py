@@ -49,6 +49,80 @@ class Blocker(str, Enum):
     COUNTER_STATE_UNREADABLE = "state penghitung harian tidak bisa dibaca"
 
 
+class UnverifiedTracker:
+    """
+    Menghitung kebijakan "tidak bisa dipastikan".
+
+    Berbeda dari `SafetyGate`, yang menjawab "boleh atau tidak SEKARANG"
+    (satu daftar blocker), kelas ini menjawab "KAPAN harus berhenti" —
+    state yang butuh waktu: berapa failures beruntun dan sejak kapan.
+
+   Policy ini untuk kondisi di mana kita tidak tahu apa pun: bursa tidak
+    terbaca, rate limit, respons tak terduga. Untuk DIVERGENSI
+    terkonfirmasi kill switch menyala langsung, tanpa lewat sini.
+
+    Sifat yang disengaja:
+      * Order baru dijeda sejak kegagalan PERTAMA, bukan setelah ketiga.
+        Bot yang tetap mencoba mengirim order selama dua kegagalan
+        berarti mencoba mengirim tanpa tahu apa yang terjadi.
+      * Dua batas: streak (gagal berdekatan) DAN waktu (gagal jarang tapi
+        terus-menerus). Satu saja tidak cukup — kegagalan satu per menit
+        sepanjang malam tidak pernah mencapai tiga berturut-turut.
+    """
+
+    def __init__(self, cfg: Optional[LiveConfig] = None):
+        self.cfg = cfg or LiveConfig()
+        self.consecutive = 0
+        self.first_failure_at: Optional[float] = None
+        #: Alasan kegagalan terakhir, untuk log dan alert.
+        self.last_reason: str = ""
+
+    def record_failure(self, now: float, reason: str = "") -> bool:
+        """Catat satu kegagalan. True kalau policy sudah terlampaui."""
+        if self.consecutive == 0:
+            self.first_failure_at = now
+        self.consecutive += 1
+        self.last_reason = reason
+        return self.should_stop(now)
+
+    def record_success(self) -> None:
+        """Sukses mereset SEMUA, termasuk basis waktu."""
+        self.consecutive = 0
+        self.first_failure_at = None
+        self.last_reason = ""
+
+    def should_stop(self, now: float) -> bool:
+        if self.consecutive >= self.cfg.unverified_max_consecutive:
+            return True
+        if self.first_failure_at is not None:
+            elapsed = now - self.first_failure_at
+            if elapsed >= self.cfg.unverified_max_seconds:
+                return True
+        return False
+
+    def next_delay(self) -> Optional[float]:
+        """
+        Delay sebelum percobaan berikutnya, None kalau policy habis.
+
+        None berarti "jangan coba lagi tanpa menilai ulang kondisi" —
+        mengembalikan nilai terakhir akan berarti retry tanpa jeda.
+        """
+        delays = tuple(self.cfg.unverified_retry_backoff)
+        idx = self.consecutive - 1
+        if idx < 0 or idx >= len(delays):
+            return None
+        return delays[idx]
+
+    def is_paused(self) -> bool:
+        """Order baru dijeda sejak kegagalan PERTAMA."""
+        return self.consecutive > 0
+
+    def summary(self) -> str:
+        """Satu baris untuk log/alert."""
+        return ("%d kegagalan berturut-turut (terakhir: %s)"
+                % (self.consecutive, self.last_reason or "tanpa alasan"))
+
+
 def _current_commit_hash() -> str:
     """
     Hash commit git saat ini, atau `"unknown"`.

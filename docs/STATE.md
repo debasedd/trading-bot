@@ -384,7 +384,7 @@ Hanya yang dinyatakan eksplisit. Konteks di
 
 ## Larangan yang tetap berlaku
 
-1. **Jangan set `TRADEBOT_LIVE` atau `TRADEBOT_LIVE_CONFIRMED`.** Jangan baca,
+1. **Jangan dulu  `TRADEBOT_LIVE` atau `TRADEBOT_LIVE_CONFIRMED`.** Jangan baca,
    minta, atau pakai private key mainnet. Jangan kirim order ke mainnet.
    Kerja di kode, test, paper, dan testnet dengan key testnet dari operator —
    jangan membuat atau mencari key sendiri. Pindah ke mainnet keputusan
@@ -816,7 +816,7 @@ settlement. Alasannya:
    periode settlement sebenarnya.
 
 Sebelum (f) dikerjakan, endpoint dan skemanya perlu dikonfirmasi operator
-(lihat § Pertanyaan yang menunggu operator). Jangan 구현 dulu lalu
+(lihat § Pertanyaan yang menunggu operator). Jangan eksekusi dulu lalu
 meminta konfirmasi — ledger yang salah lebih mahal daripada item yang
 belum dikerjakan.
 

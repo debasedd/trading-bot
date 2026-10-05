@@ -34,6 +34,7 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from core.config import LiveConfig
+from trading.live.safety import UnverifiedTracker
 
 
 class TestPolicyConfiguration(unittest.TestCase):
@@ -69,54 +70,6 @@ class TestPolicyConfiguration(unittest.TestCase):
         delays = list(LiveConfig().unverified_retry_backoff)
         self.assertEqual(delays, sorted(delays),
                          "backoff harus tidak menurun")
-
-
-class UnverifiedTracker:
-    """
-    Menghitung kebijakan "tidak bisa dipastikan".
-
-    Sengaja terpisah dari `SafetyGate`: gerbang memutuskan boleh-tidaknya
-    order SEKARANG (satu blocker), sedangkan ini menghitung KAPAN harus
-    berhenti — state yang butuh waktu (streak + sejak kapan), bukan satu
-    kondisi Boolean.
-    """
-
-    def __init__(self, cfg=None):
-        self.cfg = cfg or LiveConfig()
-        self.consecutive = 0
-        self.first_failure_at = None
-
-    def record_failure(self, now):
-        """Catat satu kegagalan. True kalau policy sudah terlampaui."""
-        if self.consecutive == 0:
-            self.first_failure_at = now
-        self.consecutive += 1
-        return self.should_stop(now)
-
-    def record_success(self):
-        """Sukses mereset SEMUA, termasuk batas waktu."""
-        self.consecutive = 0
-        self.first_failure_at = None
-
-    def should_stop(self, now):
-        if self.consecutive >= self.cfg.unverified_max_consecutive:
-            return True
-        if self.first_failure_at is not None:
-            if (now - self.first_failure_at) >= self.cfg.unverified_max_seconds:
-                return True
-        return False
-
-    def next_delay(self):
-        """Delay sebelum percobaan berikutnya, None kalau policy habis."""
-        delays = tuple(self.cfg.unverified_retry_backoff)
-        idx = self.consecutive - 1
-        if idx < 0 or idx >= len(delays):
-            return None
-        return delays[idx]
-
-    def is_paused(self):
-        """Order baru dijeda sejak kegagalan PERTAMA, bukan setelah ketiga."""
-        return self.consecutive > 0
 
 
 class TestUnverifiedPolicyBehaviour(unittest.TestCase):
