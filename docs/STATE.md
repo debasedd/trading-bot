@@ -33,6 +33,46 @@ Angka itu tidak dipublikasikan sebagai mutation score. Lihat
 
 Output lengkap: `docs/reports/verifikasi-2026-10-05.md`.
 
+### Status butir 1-8 (sesi 2026-10-05, lanjutan)
+
+| # | Butir | Status | Commit |
+|---|---|---|---|
+| 1 | `UnverifiedTracker` disambungkan ke `run_loop` | selesai | `b2dc0a8` |
+| 2 | Perintah operator lepas kill switch | selesai | `fedacd9` |
+| 3 | Pagar kewajaran `validUntil` | selesai | `0d5f605` |
+| 4 | `docs/TESTNET_CHECKLIST.md` | selesai (7 asumsi tercatat) | `0d5f605` |
+| 5 | Bursa tiruan stateful + test jalur uang | selesai | `f42ffa0` |
+| 6 | State kill switch selalu dibaca dari disk | selesai | `3f8a6ff` |
+| 7 | `disengage_kill_switch()` dihapus | selesai | `3f8a6ff` |
+| 8 | Single-instance lock (file + PID + lock basi) | selesai | `e639c27` |
+| — | Skrip seed (buat + baca, tidak diketik) | selesai | `d859882` |
+| — | Pagar hash isi `.db`/`.json` | selesai | `d859882` |
+| — | Pemindaian karakter rusak | selesai | `3a610d5` |
+| — | **Skor mutasi jalur uang** | **BELUM ADA** | — |
+
+### RISIKO TERBUKA: skor mutasi jalur uang belum ada
+
+`mutmut` hanya jalan di WSL, dan setelah semua hambatan teratasi ia
+melaporkan `killed = 0` dari 2076 mutan — bertentangan dengan harness
+yang sudah dibuktikan bisa membunuh mutan (mutasi yang sama di sandbox
+yang sama membunuh 8 test). Verdict-nya TIDAK bisa dipercaya, jadi
+tidak ada angka mutation score untuk `safety.py`, `executor.py`, atau
+`client.py` yang layak dipublikasikan.
+
+Sebagai gantinya: mutasi terarah yang terbukti. 9 bukti cabutan pada
+sesi 2026-10-05, masing-masing merah -> hijau. Daftar lengkap ada di
+`docs/reports/verifikasi-2026-10-05.md`.
+
+Yang BELUM diketahui karena skor mutasi tidak ada: berapa banyak cabang
+di jalur uang yang salah tapi masih hijau di test suite. Test perilaku
+menyempit celah itu (bursa tiruan berkeadian tiang, partial fill sungguhan,
+lock basi), tapi tidak menggantikannya.
+
+Langkah berikutnya yang ditandai: pasang **mutan kanari** (satu mutan
+yang pasti terbunuh) sebagai syarat sebelum tiap run mutmut — kalau
+kanari dilaporkan selamat, hentikan run, jangan lanjutkan.
+lalu, kalau harness tetap rusak, ganti ke `cosmic-ray`.
+
 ---
 
 ## Ringkasan
@@ -41,7 +81,7 @@ Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   914 passed, 4 skipped          (0 failed, 0 xfailed)
+pytest:   959 passed, 4 skipped          (0 failed, 0 xfailed)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
