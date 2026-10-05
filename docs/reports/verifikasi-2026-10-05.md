@@ -415,7 +415,50 @@ fence SEBELAH ditulis: 270 berkas
 $ python _seed_sweep.py 25
 ```
 
-_(hasil mentah di bawah)_
+```
+\$ python _seed_sweep.py 25
+seed 1     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.77s
+seed 2     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.34s
+seed 3     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.76s
+seed 4     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 45.69s
+seed 5     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.57s
+seed 6     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.06s
+seed 7     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.09s
+seed 8     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.20s
+seed 9     rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.00s
+seed 10    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.66s
+seed 11    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.94s
+seed 12    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.25s
+seed 13    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.50s
+seed 14    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.28s
+seed 15    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.49s
+seed 16    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.67s
+seed 17    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.76s
+seed 18    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.71s
+seed 19    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.16s
+seed 20    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.32s
+seed 21    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 47.32s
+seed 22    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 45.64s
+seed 23    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 45.88s
+seed 24    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.10s
+seed 25    rc=0  965 passed, 4 skipped, 3 warnings, 90 subtests passed in 46.28s
+
+=== 25/25 hijau ===
+SEMUA SEED HIJAU
+
+### Pagar hash SESUDAH 25 seed penuh
+```
+$ python _state_fence.py after fence2_before.json
+fence SESUDAH: 270 berkas
+BARU    : 0 []
+HILANG : 0 []
+BERUBAH: 0 []
+FENCE_RC=0
+```
+
+**rc=0: 25. rc!=0: 0.** 270 berkas sebelum, 270 setelah, nol perubahan
+isi -- bahkan setelah 25 run suite penuh.
+```
 
 ---
 
