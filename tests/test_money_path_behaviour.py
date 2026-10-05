@@ -389,3 +389,73 @@ class TestRecordExchangeFills(unittest.TestCase):
                 "stop_loss": 90.0, "take_profit": 120.0,
                 "entry_price": 100.0}
 
+    def test_close_fill_closes_the_local_row(self):
+        """
+        Fill CLOSE dari bursa harus menutup baris lokal.
+
+        Tanpa ini: baris posisi tetap `OPEN` selamanya, daily-loss
+        breaker tidak punya sumber angka, dan setiap SL/TP yang bekerja
+        terlihat sebagai divergensi.
+        """
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex, row=self._open_row())
+        out = asyncio.run(eng.record_exchange_fills([self._close_fill()]))
+        self.assertEqual(len(out), 1, "fill CLOSE tidak dicatat sama sekali")
+        self.assertEqual(closed[0]["row_id"], 42)
+
+    def test_close_fill_feeds_daily_loss_breaker(self):
+        """
+        `record_realized_pnl` adalah SATU-SATUNYA pemakan
+        `Blocker.DAILY_LOSS_LIMIT` di live.
+        """
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex, row=self._open_row())
+        asyncio.run(eng.record_exchange_fills(
+            [self._close_fill(closed_pnl=-5.0)]))
+        self.assertTrue(eng.engine.gate.record_realized_pnl.called,
+                        "PnL realized tidak masuk gate — daily-loss "
+                        "breaker live tidak punya sumber angka")
+
+    def test_close_fill_drops_position_from_engine(self):
+        """
+        Posisi di `engine.positions` harus hilang setelah fill CLOSE.
+
+        Kalau tidak, `reconcile` masih punya posisi yang sudah tutup dan
+        kill switch menyala pada SL/TP yang bekerja.
+        """
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex, row=self._open_row())
+        eng.engine.positions["BTC/USDT:USDT"] = mock.Mock()
+        asyncio.run(eng.record_exchange_fills([self._close_fill()]))
+        self.assertNotIn("BTC/USDT:USDT", eng.engine.positions,
+                         "posisi tetap ada di engine setelah fill CLOSE")
+
+    def test_open_fill_is_not_treated_as_a_close(self):
+        """
+        Fill OPEN bukan penutupan.
+
+        Mutan yang mematikan filter `kind != "CLOSE"` harus membuat test
+        ini merah: tanpa filter, baris yang baru dibuat ikut tertutup.
+        """
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex, row=self._open_row())
+        asyncio.run(eng.record_exchange_fills(
+            [self._close_fill(kind="OPEN", price=100.0, closed_pnl=0.0)]))
+        self.assertEqual(closed, [], "fill OPEN diperlakukan sebagai CLOSE")
+
+    def test_zero_price_fill_is_not_recorded(self):
+        """Harga 0 = respons tidak bisa dipercaya. Tidak boleh dicatat."""
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex, row=self._open_row())
+        asyncio.run(eng.record_exchange_fills([self._close_fill(price=0.0)]))
+        self.assertEqual(closed, [],
+                         "fill dengan harga 0 dicatat sebagai penutupan")
+
+    def test_empty_fill_list_sends_nothing(self):
+        ex = StatefulExchange(mid=100.0)
+        eng, closed = self._engine_with_fills(ex)
+        asyncio.run(eng.record_exchange_fills([]))
+        self.assertEqual(closed, [])
+        self.assertEqual(ex.submitted, [],
+                         "tidak ada fill tapi order tetap dikirim")
+
