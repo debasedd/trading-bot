@@ -3,7 +3,35 @@
 **Satu-satunya sumber status program.** Baca sebelum bekerja. Perbarui di
 akhir setiap sesi dan sebelum laporan fase.
 
-Terakhir: 2026-10-04 · Branch `fase-1`
+Terakhir: 2026-10-05 · Branch `fase-1`
+
+---
+
+## Status (h) per 2026-10-05
+
+Laporan sebelumnya menyatakan (h) selesai. Verifikasi ulang 2026-10-05
+menemukan dua gap nyata, keduanya sudah ditutup:
+
+| Butir | Sebelum | Sekarang |
+|---|---|---|
+| `UnverifiedTracker` terpakai produksi | **TIDAK** (hanya di test) | `b2dc0a8`, dipanggil `run_loop` |
+| Perintah operator lepas kill switch | **TIDAK ADA** | `fedacd9`, `run.py --release-kill-switch` |
+| Pagar kewajaran `validUntil` | tidak ada | `0d5f605` (dan dikoreksi: hanya batas atas) |
+
+Yang tetap **TIDAK** terpasang, dan itu disengaja atau di luar jangkauan:
+
+- `disengage_kill_switch()` tidak dipanggil produksi. Jalur pelepasan yang
+  sah adalah `operator_release()`.
+- `_redirect_log_handlers()` hanya fixture di `tests/conftest.py`. Tidak
+  pernah ada di produksi — STATE.md sebelumnya menyodorkannya sebagai safety.
+
+**Item 5 (mutmut) BELUM SELESAI.** mutmut hanya jalan di WSL, dan setelah
+semua hambatan teratasi ia melaporkan `killed = 0` dari 2076 mutan —
+bertentangan dengan harness yang sudah dibuktikan bisa membunuh mutan.
+Angka itu tidak dipublikasikan sebagai mutation score. Lihat
+`docs/reports/verifikasi-2026-10-05.md` bagian 5.
+
+Output lengkap: `docs/reports/verifikasi-2026-10-05.md`.
 
 ---
 
@@ -13,14 +41,14 @@ Fase 0 **LULUS**. Fase 1 **BELUM LULUS** — 5 dari 10 item selesai, dua gerbang
 terakhir belum bisa dijalankan karena butuh testnet key.
 
 ```
-pytest:   888 passed, 4 skipped          (0 failed, 0 xfailed)
+pytest:   914 passed, 4 skipped          (0 failed, 0 xfailed)
 ```
 
 Tidak ada test failed maupun xfailed. Semua perbaikan Fase 1 sudah punya bukti
 cabutan. Dua gerbang yang tersisa — chaos test dan smoke test testnet — butuh
 testnet key dari operator.
 
-**Sweep seed 25/25 SELESAI PENUH di commit akhir: 25 seed `rc=0`, semuanya 888 passed,
+**Sweep seed 25/25 SELESAI PENUH di commit akhir: 25 seed `rc=0`, semuanya 914 passed,
 4 skipped, nol `failed`.** Ini bedanya dari run sebelumnya, di mana 4 dari
 25 proses mati di tengah jalan. Penyebab matinya sudah dicari dan TIDAK
 bukan test:
@@ -504,7 +532,8 @@ Riwayat sweep yang sudah lewat:
 | 25 seed (tree bersih) | `a3cb243` | 25/25 |
 | 25 seed (dengan guard jaringan + env) | `8ea6d7c` | 25/25, 731 passed |
 | 25 seed (preflight + pagar AST) | `f922395` | 25/25, 765 passed |
-| 25 seed (commit akhir (h)) | `d4ede06` | 25/25, 888 passed |
+| 25 seed (commit akhir (h), `d4ede06`) | `d4ede06` | 25/25, 888 passed |
+| 25 seed (diulang 2026-10-05 setelah (h)) | `3713aaa` | 25/25, 914 passed |
 
 Sweep pertama setelah preflight **dibatalkan** karena pagar AST masih
 sedang disunting saat sweep berjalan. Angka dari sweep yang dibatalkan
