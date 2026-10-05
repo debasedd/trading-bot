@@ -1082,6 +1082,18 @@ async def main():
     decision = _choose_mode()
     app = TradingBotApp(decision)
 
+    # Kunci satu-instance. SESUDAH menu mode, bukan sebelumnya: operator
+    # yang batal dari menu tidak boleh meninggalkan lock tertinggal.
+    #
+    # Hanya untuk mode live. Dua instance paper hanya mengulang pekerjaan
+    # dan tidak mengirim order ke siapa pun.
+    lock = None
+    mode = getattr(getattr(app, "decision", None), "mode", None)
+    if mode in ("testnet", "mainnet"):
+        lock = _acquire_instance_lock()
+        if lock is None:
+            return 4
+
     loop = asyncio.get_running_loop()
 
     # Tangani sinyal penghentian di platform yang mendukung
@@ -1099,6 +1111,11 @@ async def main():
         logger.info("Sinyal henti diterima dari pengguna.")
     finally:
         await app.shutdown()
+        # Lock dilepas DI AKHIR, setelah shutdown selesai. Melepasnya
+        # lebih awal memberi celah di mana instance kedua bisa start
+        # sementara proses pertama masih menutup koneksi.
+        if lock is not None:
+            lock.release()
 
 
 async def _fresh_reconcile():
@@ -1268,6 +1285,58 @@ def _operator_release() -> int:
     return 0
 
 
+def _acquire_instance_lock():
+    """
+    Ambil kunci satu-instance untuk akun live.
+
+    Mengembalikan lock yang sudah DIAMANKAN, jadi pemanggil tidak
+    perlu memanggil `acquire()` lagi dan tidak bisa terlupa.
+
+    Kalau gagal, alasannya dicetak dan proses berhenti dengan kode 4.
+    Melanjutkan tanpa kunci berarti dua proses mengirim order ke akun
+    yang sama — dua eksposur, dan kill switch hanya ada di salah
+    satunya.
+    """
+    from trading.live.single_instance import SingleInstanceLock
+
+    account = (os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS")
+               or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")[:10]
+               or "tanpa-alamat")
+    lock = SingleInstanceLock(account)
+    if not lock.acquire():
+        _print_safe("")
+        _print_safe("  BOT TIDAK DIJALANKAN.")
+        _print_safe("  Alasan: {}".format(lock.blocked_reason))
+        return None
+    return lock
+
+
+def _release_command_refuses_while_bot_running() -> Optional[str]:
+    """
+    True kalau ada instance bot yang sedang memegang lock akun.
+
+    `--release-kill-switch` membaca dan menulis file state yang sama
+    dengan yang sedang ditulis proses bot yang hidup. Melepas switch
+    sementara bot berjalan berarti switch naik lagi pada iterasi
+    berikutnya, dan operator mengira ia sudah bebas.
+    """
+    from trading.live.single_instance import (SingleInstanceLock,
+                                             _pid_alive, read_lock_pid)
+
+    account = (os.environ.get("HYPERLIQUID_ACCOUNT_ADDRESS")
+               or os.environ.get("HYPERLIQUID_PRIVATE_KEY", "")[:10]
+               or "tanpa-alamat")
+    path = SingleInstanceLock(account).path
+    pid = read_lock_pid(path)
+    if pid is not None and _pid_alive(pid):
+        return ("Bot sedang berjalan untuk akun ini (PID %d, lock: %s). "
+                "Hentikan bot DULU, baru lepas kill switch — melepas "
+                "sambil bot hidup akan menyalakannya lagi pada iterasi "
+                "berikutnya, dan itu memberi keyakinan salah."
+                % (pid, path))
+    return None
+
+
 def _cli(argv=None) -> int:
     """
     Titik masuk proses. Mengembalikan KODE KELUAR.
@@ -1292,6 +1361,12 @@ def _cli(argv=None) -> int:
     # menjalankan rekonsiliasi dan menulis audit log, tapi tidak pernah
     # mengirim order dan tidak menjalankan agen maupun dashboard.
     if "--release-kill-switch" in argv:
+        busy = _release_command_refuses_while_bot_running()
+        if busy:
+            _print_safe("")
+            _print_safe("  BOT TIDAK DIJALANKAN.")
+            _print_safe("  Alasan: {}".format(busy))
+            return 4
         return _operator_release()
 
     # Mode sekali: `python run.py --repair-candles` membersihkan tabel
