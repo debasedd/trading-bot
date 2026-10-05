@@ -317,6 +317,84 @@ class TestAgentExpiry(unittest.TestCase):
                               account_address=MASTER, address=SIGNER)
         ex.verify_agent_wallet()
 
+    def test_absurdly_far_future_is_not_assumed_valid(self):
+        """
+        Angka di tahun 55927 = hasil salah satuan, dan itu TIDAK boleh
+        dianggap "beres".
+
+        Ini arah kegagalan yang paling berbahaya dari pagar kewajaran:
+        angka gila yang dianggap aman membuat pemeriksaan kedaluwarsa
+        selalu lulus, dan itu tidak pernah bersuara.
+        """
+        ex = _ExchangeDouble([self._agent(1_700_000_000_000_000)],
+                              account_address=MASTER, address=SIGNER)
+        ex.verify_agent_wallet()   # tidak melempar: dianggap "tidak bisa nilai"
+
+    def test_far_future_conversion_returns_none(self):
+        seconds = LiveExchange._agent_valid_until_seconds(
+            1_700_000_000_000_000)
+        self.assertIsNone(seconds,
+                          "nilai tahun 55927 diterima sebagai validUntil")
+
+    def test_past_value_is_expired_not_unverifiable(self):
+        """
+        Nilai di masa lalu yang MASUK AKAL = kedaluwarsa sungguhan.
+
+        Pagar kewajaran hanya menolak yang tidak masuk akal; yang masuk
+        akal tapi sudah lewat harus tetap jadi `agent_expired`.
+        """
+        import time
+        ex = _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER,
+              "validUntil": time.time() - 86400}],   # kemarin
+            account_address=MASTER, address=SIGNER)
+        with self.assertRaises(PreflightError) as ctx:
+            ex.verify_agent_wallet()
+        self.assertEqual(ctx.exception.code, PreflightError.AGENT_EXPIRED)
+
+    def test_plausible_window_boundaries(self):
+        """
+        Batas jendela: 30 detik ke depan sah, 2 tahun ke depan tidak.
+
+        Angka 2 tahun ke depan hampir pasti salah satuan, dan menerimanya
+        berarti pemeriksaan kedaluwarsa jadi tidak FUNCIONAL.
+        """
+        import time
+        now = time.time()
+        self.assertIsNotNone(
+            LiveExchange._agent_valid_until_seconds(now + 30),
+            "30 detik ke depan ditolak sebagai tidak masuk akal")
+        self.assertIsNone(
+            LiveExchange._agent_valid_until_seconds(now + 2 * 366 * 86400),
+            "2 tahun ke depan diterima — pagar kewajaran tidak bekerja")
+
+    def test_milliseconds_in_past_are_expired(self):
+        """
+        Satuan ms di masa lalu harus kedaluwarsa SAHIH, bukan "tidak bisa nilai".
+
+        Versi test sebelumnya mengharapkan `None` untuk kasus ini — itu
+        menguji KE SALAH pagarnya: menolak nilai masa lalu sebagai "tidak
+        bisa menilai" membuat agent yang benar-benar kedaluwarsa LOLOS.
+        Pagar kewajaran hanya boleh menolak nilai yang tidak masuk akal
+        (terlalu jauh ke depan), bukan yang sudah lewat.
+        """
+        import time
+        now_ms = int(time.time() * 1000)
+        seconds = LiveExchange._agent_valid_until_seconds(now_ms - 86400_000)
+        self.assertIsNotNone(seconds,
+                            "nilai ms kemarin jadi 'tidak bisa nilai'")
+        self.assertLess(seconds, time.time(),
+                        "nilai ms kemarin ditafsirkan sebagai masa depan")
+
+        # Dan efeknya: `verify_agent_wallet` harus MENOLAKNYA.
+        ex = _ExchangeDouble(
+            [{"name": "bot", "address": SIGNER,
+              "validUntil": now_ms - 86400_000}],
+            account_address=MASTER, address=SIGNER)
+        with self.assertRaises(PreflightError) as ctx:
+            ex.verify_agent_wallet()
+        self.assertEqual(ctx.exception.code, PreflightError.AGENT_EXPIRED)
+
 
 class TestPeriodicReverification(unittest.TestCase):
     """

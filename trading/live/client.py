@@ -545,13 +545,28 @@ class LiveExchange:
         """
         Ubah `validUntil` menjadi detik-since-epoch, atau None.
 
-        None berarti "tidak bisa dinilai" — `validUntil` yang tidak ada,
-        nol, atau tidak bisa diparse. Itu TIDAK sama dengan "tidak
-        kedaluwarsa":obot tidak tahu, jadi pemeriksaan kedaluwarsa dilewati
-        demi mencegah penolakan palsu pada agent yang sebenarnya sah.
+        None berarti "TIDAK BISA DINILAI". Dipakai untuk tiga hal: field
+        yang tidak ada, yang nol, dan yang KURANG MEYAKINKAN.
 
-        Satu-satunya alasan None dipakai:menolak agent yang jelas masih
-        beres hanya karena bursa tidak mengirim field-nya.
+        PAGA KEWARGAAN
+        ---------------
+        Satuan `validUntil` TIDAK didokumentasikan, jadi satuan ditebak
+        dari besarannya. Kalau tebakan itu salah, hasilnya angka yang
+        terlihat masuk akal padahal salah arti — dan pemeriksaan
+        kedaluwarsa yang "selalu lulus" adalah kegagalan yang tidak pernah
+        bersuara.
+
+        Karena itu hasil konversi harus berada di JENDELA MASUK AKAL:
+        tidak boleh di masa lalu (berarti sudah kedaluwarsa), dan tidak
+        boleh lebih dari ~1 tahun ke depan (kemungkinan salah satuan).
+
+        Di luar jendela itu hasilnya None — "tidak bisa menilai" — BUKAN
+        dianggap aman. Menganggap angka gila sebagai "beres" sama
+        berbahaya dengan menganggapnya kedaluwarsa: dua-duanya membuat
+        orang salah percaya.
+
+        SATUAN MASIH PERLU DIKONFIRMASI dari respons nyata testnet.
+        Lihat docs/TESTNET_CHECKLIST.md.
         """
         if raw is None or raw == "":
             return None
@@ -561,8 +576,30 @@ class LiveExchange:
             return None
         if value <= 0:
             return None
+
         # > 1e11 detik = 3170 tahun. Pasti milidetik.
-        return value / 1000.0 if value > 1e11 else value
+        seconds = value / 1000.0 if value > 1e11 else value
+
+        now = datetime.now(timezone.utc).timestamp()
+        max_future = now + 366 * 86400.0
+
+        # Batas ATAS saja yang menentukan "tidak masuk akal". Nilai di masa
+        # lalu TIDAK ditolak di sini: `now - 86400` (kemarin) adalah
+        # kedaluwarsa yang SAHIH dan harus diteruskan supaya `verify_agent_wallet`
+        # bisa menolaknya sebagai `agent_expired`.
+        #
+        # Menolak nilai masa lalu sebagai "tidak bisa menilai" membuat agent
+        # yang benar-benar kedaluwarsa LOLOS — itu kebalikan dari tujuan
+        # pagar ini.
+        if seconds > max_future:
+            logger.error(
+                "validUntil=%r jadi %.0f detik, lebih dari 1 tahun ke depan "
+                "(batas %.0f). Unitnya kemungkinan bukan yang diasumsikan, "
+                "jadi TIDAK dianggap beres. Konfirmasi satuan dari respons "
+                "testnet nyata — lihat docs/TESTNET_CHECKLIST.md.",
+                raw, seconds, max_future)
+            return None
+        return seconds
 
     def agent_verification_due(self, now: Optional[float] = None) -> bool:
         """
