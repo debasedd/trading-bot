@@ -49,6 +49,33 @@ class Blocker(str, Enum):
     COUNTER_STATE_UNREADABLE = "state penghitung harian tidak bisa dibaca"
 
 
+def _current_commit_hash() -> str:
+    """
+    Hash commit git saat ini, atau `"unknown"`.
+
+    Dicatat di audit log supaya pertanyaan "kode apa yang sedang
+    berjalan waktu kill switch dilepas" bisa dijawab, bukan ditebak.
+    Kegagalan `git` TIDAK boleh menggagalkan pelepasan — audit yang
+    kosong lebih berguna daripada switch yang tidak bisa dilepas.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        pass
+    return "unknown"
+
+
+def _env_is_live(env: dict) -> bool:
+    return str(env.get("TRADEBOT_LIVE", "")).strip() in ("1", "true", "yes")
+
+
 @dataclass
 class OrderRequest:
     """Satu niat order, sudah tervalidasi bentuknya tapi belum dikirim."""
@@ -198,6 +225,14 @@ class SafetyGate:
     #: bersih akan diam-diam melepas switch yang sengaja dinyalakan.
     KILL_SWITCH_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
+    #: Frasa yang harus DIKETIK ULANG operator untuk melepas switch.
+    #: Sengaja panjang dan spesifik supaya tidak bisa terjadi karena
+        #: paste tidak sengaja, dan isinya menyebut konsekuensinya supaya
+    #: operator membacanya sebelum mengetik.
+    RELEASE_CONFIRMATION_PHRASE = (
+        "SAYA SUDAH PERIKSA PENYEBABNYA DAN INGIN MELANGSUNGKAN TRADING"
+    )
+
     def __init__(self, cfg: LiveConfig, env: Optional[dict] = None,
                  state_path=None):
         self.cfg = cfg
@@ -213,6 +248,12 @@ class SafetyGate:
         # menyentuh direktori kerja yang mungkin tidak bisa ditulis.
         self.state_path = state_path or Path(
             "data_store/live_counters.json")
+        # Audit log pelepasan mengikuti `state_path`. Begitu keduanya berada
+        # di tempat yang sama, test yang mengarahkan path ke tmp_path
+        # otomatis mengarahkan audit juga — tanpa konfigurasi kedua yang
+        # bisa lupa dan menulis audit ke file produksi.
+        self.audit_path = self.state_path.with_name(
+            self.state_path.stem + "_audit.jsonl")
         if state_path is not None or str(self.env.get("TRADEBOT_LIVE", "")) in (
                 "1", "true", "yes"):
             # Hanya muat dari file kalau live memang diaktifkan, supaya
@@ -240,23 +281,23 @@ class SafetyGate:
             # kill switch dari run sebelumnya — atau dari test lain.
             self.counters.engaged = False
 
-        # `TRADEBOT_LIVE_KILL_SWITCH` punya TIGA keadaan, bukan dua, dan
-        # hanya dua yang bisa ditebak dari string:
+        # `TRADEBOT_LIVE_KILL_SWITCH` HANYA BISA MENYALAKAN.
         #
-        #   tidak di-set           -> ikuti apa yang tersimpan di disk
-        #   "1"/"true"/"yes"/...   -> paksa AKTIF
-        #   "0"/"false"/"no"/...   -> paksa LEPAS
+        #   tidak di-set / "0"/"false"/"no"/"off" -> ikuti disk, jangan
+        #                                             sentuh apa pun
+        #   "1"/"true"/"yes"/...                     -> paksa AKTIF
         #
-        # Melewatkan keadaan ketiga membuat error ini mustahil ditulis dari
-        # operator: dia menyetel `=0` untuk melepas switch, dan switch-nya
-        # tetap aktif — tanpa satu pesan pun yang bilang bahwa explicit
-        # release-nya diabaikan. Itu persis kelas bug yang paling mahal
-        # di sistem ini: UI semu yang terlihat benar di log.
+        # Versi sebelumnya memperlakukan nilai "off" sebagai "LEPAS". Itu
+        # membuat pelepasan kill switch menjadi satu ketikan di shell —
+        # bisa terjadi karena salah ketik, bisa karena restart cronjob yang
+        # menyalin environment, dan tidak ada jejak siapa yang melepas.
         #
-        # Perhatikan bahwa "tidak di-set" TIDAK sama dengan "0". Env yang
-        # tidak ada harus mengikuti disk, kalau tidak bot yang restart
-        # dengan konfigurasi bersih akan diam-diam melepas switch yang
-        # sengaja dinyalakan.
+        # Env yang bisa MENYALAKAN tapi tidak bisa MELEPAS membuat kelas
+        # kesalahan jauh lebih kecil: salah ketik, salah copy-paste, atau
+        # proses restart yang bringa state switch dari disk. Melepas switch
+        # adalah keputusan yang harus terlihat dan bisa dipertanggungjawabkan,
+        # jadi ia pindah ke `operator_release()`, yang menuntut konfirmasi
+        # ketik, alasan, rekonsiliasi bersih, dan audit log.
         raw_kill = str(self.env.get("TRADEBOT_LIVE_KILL_SWITCH", "") or "").strip().lower()
         if raw_kill and raw_kill not in self.KILL_SWITCH_OFF_VALUES:
             self.counters.engaged = True
@@ -264,22 +305,123 @@ class SafetyGate:
                 "KILL SWITCH aktif karena TRADEBOT_LIVE_KILL_SWITCH diset. "
                 "Tidak ada order yang dikirim sampai operator melepasnya."
             )
-        elif raw_kill:
-            if self.counters.engaged:
-                logger.warning(
-                    "KILL SWITCH dilepas karena TRADEBOT_LIVE_KILL_SWITCH=0 "
-                    "diset eksplisit. Pastikan penyebabnya sudah diperbaiki "
-                    "- melepas switch TIDAK memperbaiki apa pun."
-                )
-            self.counters.engaged = False
-            self.counters.consecutive_errors = 0
-            self.persist()
+        elif raw_kill and self.counters.engaged:
+            # Nilai "off" TIDAK melepas switch yang sudah aktif di disk.
+            # Pesan ini wajib dan wajib menyebut jalan yang benar,
+            # supaya operator tidak mengira dia sudah melepasnya.
+            logger.error(
+                "TRADEBOT_LIVE_KILL_SWITCH=%s DIABAIKAN: env tidak pernah "
+                "melepas kill switch yang sudah aktif. Env hanya bisa "
+                "MENYALAKAN. Untuk melepas, jalankan perintah operator "
+                "resmi (lihat docs/STATE.md § Pelepasan kill switch) — "
+                "perintah itu meminta konfirmasi ketik, alasan, dan "
+                "rekonsiliasi bersih, serta mencatat audit log.", raw_kill
+            )
         elif self.counters.engaged:
             logger.error(
                 "KILL SWITCH masih aktif dari run sebelumnya. Tidak ada "
                 "order yang dikirim sampai operator melepasnya lewat "
-                "TRADEBOT_LIVE_KILL_SWITCH=0."
+                "perintah operator resmi."
             )
+
+    def operator_release(self, reason: str, typed_confirmation: str,
+                          reconcile_clean: bool,
+                          now: Optional[datetime] = None) -> bool:
+        """
+        SATU-SATUNYA jalan melepas kill switch. Env tidak bisa melakukannya.
+
+        Empat syarat, semuanya wajib:
+
+        1. **`typed_confirmation`** harus persis sama dengan
+           `SafetyGate.RELEASE_CONFIRMATION_PHRASE`. Yang diketik ulang
+           memaksa operator membaca Consequences-nya — melepas switch
+           adalah tindakan yang tidak bisa dibatalkan.
+        2. **`reason`** tidak boleh kosong. Tanpa alasan, audit log
+           menyimpan "dilepas" tanpa jawaban "dilepas kenapa", dan tidak
+           ada yang bisa belajar dari kejadiannya.
+        3. **`reconcile_clean`** harus True. Melepas switch sementara posisi
+           lokal dan bursa tidak cocok mengembalikan bot ke order dengan
+           keyakinan salah — itu persis kondisi yang memicu switch di
+           tempat pertama.
+        4. Audit log ditulis SETELAH semua syarat terpenuhi, dan mencatat
+           waktu, alasan, state sebelum/sesudah, dan hash commit.
+
+        Mengembalikan True kalau switch benar-benar terlepas.
+
+        `disengage_kill_switch()` tetap ada untuk pemakaian internal, tapi
+        TIDAK menyentuh state `engaged` di disk dan tidak menulis audit log
+        — itu bukan pelepasan, itu hanya perubahan lokal yang hilang saat
+        restart.
+        """
+        if not self.engaged:
+            logger.warning(
+                "Permintaan lepas kill switch diabaikan: switch sudah "
+                "tidak aktif."
+            )
+            self._write_release_audit(
+                outcome="ignored_not_engaged", reason=reason,
+                before=False, after=False, now=now)
+            return False
+
+        if typed_confirmation != self.RELEASE_CONFIRMATION_PHRASE:
+            raise PermissionError(
+                "Konfirmasi tidak cocok. Frasa yang harus diketik ulang: %r"
+                % self.RELEASE_CONFIRMATION_PHRASE)
+
+        if not reason or not str(reason).strip():
+            raise ValueError("Alasan wajib diisi untuk melepas kill switch.")
+
+        if not reconcile_clean:
+            raise RuntimeError(
+                "Rekonsiliasi belum bersih — kill switch TIDAK dilepas. "
+                "Melepas switch sekarang mengembalikan bot ke order dengan "
+                "keyakinan salah soal posisi. Perbaiki divergensi dulu.")
+
+        before = True
+        self.counters.engaged = False
+        self.counters.consecutive_errors = 0
+        self.persist()
+        self._write_release_audit(
+            outcome="released", reason=reason,
+            before=before, after=False, now=now)
+        logger.warning(
+            "KILL SWITCH dilepas oleh operator: %s. Ini TIDAK memperbaiki "
+            "apa pun — pastikan penyebabnya sudah ditangani.", reason)
+        return True
+
+    def _write_release_audit(self, outcome: str, reason: str,
+                             before: bool, after: bool,
+                             now: Optional[datetime] = None) -> None:
+        """
+        Tulis satu baris JSON ke audit log.
+
+        Fields: waktu UTC, outcome, alasan, state sebelum/sesudah, dan hash
+        commit — supaya jawaban "kode apa yang sedang berjalan saat itu"
+        bisa dijawab kemudian, bukan ditebak.
+        """
+        now = now or datetime.now(timezone.utc)
+        record = {
+            "at_utc": now.isoformat(),
+            "event": "kill_switch_release",
+            "outcome": outcome,
+            "reason": str(reason or ""),
+            "engaged_before": bool(before),
+            "engaged_after": bool(after),
+            "commit": _current_commit_hash(),
+            "state_path": str(self.state_path),
+        }
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        try:
+            self.audit_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.audit_path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except OSError as exc:
+            # Kegagalan menulis audit TIDAK boleh membatalkan pelepasan
+            # yang sudah terjadi — switch sudah tidak aktif di disk, dan
+            # memaksa operator mengulanginya hanya menambah国有 record.
+            # Tapi harus terlihat.
+            logger.error("Gagal menulis audit log pelepasan (%s): %s",
+                         self.audit_path, exc)
 
     @property
     def engaged(self) -> bool:

@@ -77,27 +77,30 @@ class TestOffValuesHaveOneSource(unittest.TestCase):
             "SafetyGate harus punya satu konstanta KILL_SWITCH_OFF_VALUES",
         )
 
-    def test_every_off_spelling_is_accepted_everywhere(self):
+    def test_every_off_spelling_never_releases(self):
         """
-        Setiap ejaan "off" harus berlaku sama di kedua tempat.
+        Setiap ejaan "off" berlaku SAMA di `__init__` dan
+        `master_blockers`, dan tidak satu pun melepas switch.
 
-        Ini test yang menangkap defect aslinya: `"off"` ada di `__init__`
-        tapi tidak di `master_blockers`.
+        Test lama di sini mengharapkan `assertFalse(gate.engaged)` —
+        itumenguji perilaku yang sekarang DIHAPUS. Env tidak lagi
+        bisa melepas; pelepasannya pindah ke `operator_release()`.
         """
         for value in ("0", "false", "no", "off"):
             with self.subTest(value=value):
                 gate = _gate(_engaged_state(),
                              TRADEBOT_LIVE_KILL_SWITCH=value)
-                self.assertFalse(
+                self.assertTrue(
                     gate.engaged,
-                    "env=%r tidak melepas kill switch di __init__" % value)
+                    "env=%r melepas kill switch — env hanya boleh MENYALAKAN"
+                    % value)
 
                 blockers = [b.value for b in gate.master_blockers()]
-                self.assertNotIn(
+                self.assertIn(
                     "kill switch aktif", blockers,
-                    "env=%r melepas switch di __init__ tapi "
-                    "master_blockers tetap memblokir — dua daftar 'off' "
-                    "yang berbeda" % value)
+                    "env=%r: __init__ menahan switch tapi master_blockers "
+                    "tidak memblokir — dua daftar 'off' yang berbeda"
+                    % value)
 
     def test_on_values_engage_everywhere(self):
         """Setiap ejaan "on" menyalakan di kedua tempat."""
@@ -320,6 +323,184 @@ class TestHealthCheckKeepsWatchingWhileEngaged(unittest.TestCase):
         self.assertEqual(engaged_calls, [],
                          "switch yang sudah menyala dinyalakan ulang — "
                          "itu hanya menambah log, bukan informasi")
+
+
+class TestEnvCannotReleaseKillSwitch(unittest.TestCase):
+    """
+    Env HANYA bisa menyalakan. Tidak pernah melepas.
+
+    Pelepasan lewat env adalah pelepasan yang tidak terlihat: bisa terjadi
+    karena salah ketik, karena cronjob menyalin environment, atau karena
+    restart proses. Tidak ada jejak siapa yang melepas dan kenapa.
+    """
+
+    def test_off_value_does_not_release_persisted_state(self):
+        """
+        `TRADEBOT_LIVE_KILL_SWITCH=0` tidak boleh melepas switch disk.
+
+        Inilah cacat aslinya: nilai "off" diperlakukan sebagai LEPAS, jadi
+        satu ketikan di shell mematikan proteksi yang sengaja dinyalakan.
+        """
+        gate = _gate(_engaged_state(), TRADEBOT_LIVE_KILL_SWITCH="0")
+        self.assertTrue(
+            gate.engaged,
+            "env=0 melepas kill switch yang tersimpan di disk — proteksi "
+            "yang sengaja dinyalakan hilang karena satu ketikan")
+
+    def test_no_off_value_releases_persisted_state(self):
+        for value in ("0", "false", "no", "off"):
+            with self.subTest(value=value):
+                gate = _gate(_engaged_state(),
+                             TRADEBOT_LIVE_KILL_SWITCH=value)
+                self.assertTrue(gate.engaged, "env=%r melepas switch" % value)
+
+    def test_on_value_still_engages(self):
+        """Env harus tetap bisa MENYALAKAN — itu satu-satunya fungsinya."""
+        gate = _gate(_fresh_path(), TRADEBOT_LIVE_KILL_SWITCH="1")
+        self.assertTrue(gate.engaged)
+
+    def test_disk_state_survives_restart(self):
+        """
+        State switch harus bertahan melewati restart.
+
+        Kalau switch tidak bertahan, mematikan bot menjadi "perbaikan":
+        bot yang restart otomatis karena crash kembali dengan limit yang
+        baru saja meledak.
+        """
+        path = _engaged_state()
+        first = _gate(path, TRADEBOT_LIVE_KILL_SWITCH="0")
+        self.assertTrue(first.engaged)
+        second = _gate(path)  # proses baru, env bersih
+        self.assertTrue(second.engaged,
+                        "kill switch tidak bertahan melewati restart")
+
+
+class TestOperatorReleaseRequiresAllFour(unittest.TestCase):
+    """Empat syarat, semuanya wajib."""
+
+    def _engaged_gate(self):
+        return _gate(_engaged_state())
+
+    def test_all_conditions_met_releases(self):
+        gate = self._engaged_gate()
+        ok = gate.operator_release(
+            reason="divergensi sudah dikonfirmasi hilang",
+            typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+            reconcile_clean=True)
+        self.assertTrue(ok)
+        self.assertFalse(gate.engaged)
+
+    def test_wrong_confirmation_raises(self):
+        gate = self._engaged_gate()
+        for bad in ("", "ya", "SAYA SUDAH PERIKSA PENYEBABNYA", "lantai"):
+            with self.subTest(typed=bad):
+                with self.assertRaises(PermissionError):
+                    gate.operator_release(reason="alasan",
+                                          typed_confirmation=bad,
+                                          reconcile_clean=True)
+                self.assertTrue(gate.engaged,
+                                "switch terlepas meski konfirmasi salah")
+
+    def test_empty_reason_raises(self):
+        gate = self._engaged_gate()
+        for bad in ("", "   "):
+            with self.subTest(reason=bad):
+                with self.assertRaises(ValueError):
+                    gate.operator_release(
+                        reason=bad,
+                        typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+                        reconcile_clean=True)
+                self.assertTrue(gate.engaged)
+
+    def test_dirty_reconcile_raises(self):
+        """
+        Rekonsiliasi kotor = JANGAN lepas.
+
+        Melepas switch dengan posisi lokal dan bursa tidak cocok mengembalikan
+        bot ke order dengan keyakinan salah — persis kondisi yang memicu
+        switch di tempat pertama.
+        """
+        gate = self._engaged_gate()
+        with self.assertRaises(RuntimeError):
+            gate.operator_release(
+                reason="alasan",
+                typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+                reconcile_clean=False)
+        self.assertTrue(gate.engaged, "switch terlepas padahal reconcile kotor")
+
+    def test_release_when_not_engaged_returns_false(self):
+        gate = _gate(_fresh_path())
+        self.assertFalse(gate.operator_release(
+            reason="alasan",
+            typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+            reconcile_clean=True))
+
+
+class TestReleaseAuditLog(unittest.TestCase):
+    """Audit log mencatat waktu, alasan, state sebelum/sesudah, commit."""
+
+    def _audit_lines(self, gate):
+        if not gate.audit_path.exists():
+            return []
+        return [json.loads(line) for line in
+                gate.audit_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+
+    def test_successful_release_is_recorded(self):
+        gate = _gate(_engaged_state())
+        gate.operator_release(
+            reason="divergensi sudah hilang",
+            typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+            reconcile_clean=True)
+        records = self._audit_lines(gate)
+        self.assertEqual(len(records), 1, "audit log harus punya satu record")
+        rec = records[0]
+        self.assertEqual(rec["event"], "kill_switch_release")
+        self.assertEqual(rec["outcome"], "released")
+        self.assertEqual(rec["reason"], "divergensi sudah hilang")
+        self.assertTrue(rec["engaged_before"])
+        self.assertFalse(rec["engaged_after"])
+        self.assertIn("at_utc", rec)
+        self.assertIn("commit", rec)
+
+    def test_not_engaged_request_is_recorded(self):
+        gate = _gate(_fresh_path())
+        gate.operator_release(
+            reason="coba-coba",
+            typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+            reconcile_clean=True)
+        records = self._audit_lines(gate)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "ignored_not_engaged")
+        self.assertFalse(records[0]["engaged_before"])
+
+    def test_audit_path_follows_state_path(self):
+        """
+        Audit log mengikuti `state_path`.
+
+        Kalau tidak, test yang mengarahkan state ke tmp_path akan menulis
+        audit ke file produksi.
+        """
+        state = pathlib.Path(tempfile.mkdtemp()) / "c.json"
+        gate = _gate(state)
+        self.assertEqual(gate.audit_path.parent, state.parent,
+                         "audit log tidak mengikuti state_path")
+        self.assertEqual(gate.audit_path.suffix, ".jsonl")
+
+    def test_audit_records_do_not_contain_private_key(self):
+        """
+        Audit log tidak boleh memuat private key.
+
+        File audit dibaca manusia dan sering ditempel di issue.
+        """
+        gate = _gate(_engaged_state())
+        gate.operator_release(
+            reason="alasan uji",
+            typed_confirmation=SafetyGate.RELEASE_CONFIRMATION_PHRASE,
+            reconcile_clean=True)
+        blob = gate.audit_path.read_text(encoding="utf-8")
+        self.assertNotIn("0x" + "ab" * 32, blob,
+                         "private key bocor ke audit log")
 
 
 def _async_empty_fills():
