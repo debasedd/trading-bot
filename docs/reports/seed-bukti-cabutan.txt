@@ -1,10 +1,10 @@
 # seed acak — dibuat oleh _seed_pick.py, BUKAN diketik manual
-# dibuat: 2026-10-05T14:37:23.042479+00:00
+# dibuat: 2026-10-05T14:59:39.235535+00:00
 # jumlah: 3
 
-1	49F3D493
-2	E54F1004
-3	8B8A2AA4
+1	D59F88E9
+2	EAB59582
+3	D5F8DCB3
 
 # perintah yang mengproduksinya:
 #   python _seed_pick.py 3 docs/reports/seed-bukti-cabutan.txt
