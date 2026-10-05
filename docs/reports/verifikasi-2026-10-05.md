@@ -260,6 +260,113 @@ Semua 22 ada di dua tempat yang SENGAJA tidak disentuh:
 Tidak ada temuan di `trading/`, `core/`, `run.py`, atau `tests/`.
 Temuan produksi yang sebelumnya ada sudah diperbaiki di `3a610d5`.
 
+---
+
+## g. BUKTI CABUTAN ACAK — seed dari berkas
+
+Seed **tidak diketik**. `_seed_pick.py` menulisnya ke
+`docs/reports/seed-bukti-cabutan.txt`, `_pick_claim.py` membacanya dari
+berkas dan memilih butir secara deterministik terhadap seed itu.
+
+```
+$ cat docs/reports/seed-bukti-cabutan.txt
+# seed acak — dibuat oleh _seed_pick.py, BUKAN diketik manual
+# dibuat: 2026-10-05T14:59:39.235535+00:00
+# jumlah: 3
+
+1	D59F88E9
+2	EAB59582
+3	D5F8DCB3
+```
+
+```
+$ python _pick_claim.py
+seed dari docs/reports/seed-bukti-cabutan.txt:
+  D59F88E9 -> 8. single-instance lock: lock kedua ditolak; 1. validUntil: pagar kewajaran; 12. fill CLOSE menutup baris lokal
+  EAB59582 -> 3. collateral spot total ATAU hold; 7. disengage_kill_switch tidak punya pemanggil; 1. validUntil: pagar kewajaran
+  D5F8DCB3 -> 13. env tidak bisa melepas kill switch; 11. closing resting dilaporkan sukses; 7. disengage_kill_switch tidak punya pemanggil
+```
+
+Tiga item diambil dari seed `D59F88E9`.
+
+### g.1 — single-instance lock, lock kedua ditolak
+
+```
+$ git commit -q -m "..."
+$ # mutan: if pid is not None and _pid_alive(pid):  ->  if False:
+$ python -m pytest tests/test_single_instance.py -q
+5 failed, 10 passed, 1 warning in 1.97s
+
+$ # cabut mutan
+$ python -m pytest tests/test_single_instance.py -q
+15 passed, 1 warning in 1.65s
+
+$ git status --porcelain
+(kosong)
+```
+
+**MATI.**
+
+### g.2 — pagar kewajaran `validUntil`
+
+```
+$ git commit -q -m "..."
+$ # mutan: if seconds > max_future:  ->  if False:
+$ python -m pytest tests/test_agent_wallet_verification.py -q
+2 failed, 25 passed in 0.95s
+
+$ # cabut mutan
+$ python -m pytest tests/test_agent_wallet_verification.py -q
+27 passed in 0.22s
+
+$ git status --porcelain
+(kosong)
+```
+
+**MATI.**
+
+### g.3 — `fill CLOSE` menutup baris lokal
+
+```
+$ git commit -q -m "..."
+$ # mutan: if fill.get("kind") != "CLOSE": continue  ->  if == "__MUTAN_NEVER__": continue
+$ python -m pytest tests/test_money_path_behaviour.py -q
+FAILED tests/test_money_path_behaviour.py::TestRecordExchangeFills::test_open_fill_is_not_treated_as_a_close
+1 failed, 24 passed in 0.34s
+
+$ # cabut mutan
+$ python -m pytest tests/test_money_path_behaviour.py -q
+25 passed in 0.25s
+
+$ git status --porcelain
+(kosong)
+```
+
+**MATI — setelah diperbaiki.** Lihat di bawah.
+
+### MUTAN YANG SELAMA INI SELAMAT, DAN APA YANG TERBUKA
+
+Percobaan pertama pada g.3 **tidak membunuh mutan**: `19 passed` dengan
+dan tanpa mutasi.
+
+Akar masalahnya bukan test yang lemah, tapi **test yang hilang**.
+Perbaikan `unittest.main()` yang yatim di awal sesi ini memotong ekor
+berkas, dan enam test `TestRecordExchangeFills` ikut terhapus —
+termasuk `test_open_fill_is_not_treated_as_a_close`, yang justru
+sendiri yang harus menangkap mutan itu.
+
+Yang berbahaya: `19 passed` terlihat hijau dan tidak ada yang
+mempermasyukannya. Testsuite yang kehilangan test **tidak lebih
+loud** daripada testsuite yang semuanya benar — keduanya hijau.
+
+Perbaikan: enam test dipulihkan (`25 passed`), lalu mutan yang sama
+dijalankan ulang dan MATI.
+
+Pelajaran yang dicatat: mutasi terarah bukan sekadar alat bukti, tapi
+juga **alat deteksi test yang hilang**. Kalau sebuah mutan selamat
+padahal jelas harus dibunuh, pertanyaannya "kenapa tidak terbunuh?",
+bukan "apakah memang setara".
+
 Laporan sebelumnya menyatakan (h) selesai. Yang berikut tidak sesuai klaim itu.
 
 **1. `UnverifiedTracker` TIDAK TERPASANG di produksi.** Hanya ada di
