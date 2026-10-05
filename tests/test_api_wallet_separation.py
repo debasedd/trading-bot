@@ -174,7 +174,7 @@ class TestInfoCallsUseTheQueryAddress(unittest.TestCase):
         # SUNTIK Info tiruan. Versi lama memakai `ex.info` langsung,
         # yang membangun `Info(base_url)` SDK -- dan itu melakukan POST
         # nyata ke `api.hyperliquid-testnet.xyz` untuk `spotMeta` setiap
-        # kali构造函数 dipanggil. Test ini didokumentasikan sebagai
+                # kali-konstruktor dipanggil. Test ini didokumentasikan sebagai
         # offline, dan memang memanggil bursa sungguhan.
         #
         # Ditemukan oleh pemblokir socket di `conftest.py`: 110 kegagalan

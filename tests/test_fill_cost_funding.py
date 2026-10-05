@@ -146,7 +146,7 @@ class TestFundingDataQuality(unittest.TestCase):
         Rate yang TEPAT di floor tiba sebagai hasil pembagian floating
         point, yang bisa sedikit di bawahnya. Perbandingan ketat
         membuangnya, dan impl itu berarti membebankan nol untuk rate
-        yang sah — bias yang 항상 ke arah yang membuat hasil terlihat
+                yang sah - bias yang condong ke arah yang membuat hasil terlihat
         lebih baik.
         """
         from trading.fill_cost import FUNDING_RATE_FLOOR

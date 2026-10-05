@@ -95,7 +95,7 @@ class TestResearchLoaderColumnIntegrity(unittest.TestCase):
             "COALESCE(volume, 0) FROM hist_candles "
             "WHERE interval = '1h' AND close > 0 ORDER BY symbol, ts LIMIT 1"
         ).fetchone()
-        # Volume BTC per menit平均值 supaya assertion bisa membandingkan.
+                # Volume BTC per menit rata-rata supaya assertion bisa membandingkan.
         cls.median_volume = cls.conn.execute(
             "SELECT AVG(volume) FROM hist_candles "
             "WHERE interval = '1h' AND symbol = (SELECT symbol FROM "

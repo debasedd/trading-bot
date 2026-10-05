@@ -422,7 +422,7 @@ TOKEN_SLOTS = [
 #
 # Tabrakan hash diselesaikan sekali di sini (bukan per render). Kalau
 # diselesaikan per render, token yang "kalah" tabrakan akan loncat ke slot
-# kosong hanya ketika 기간ya, lalu balik ke slot aslinya saat tabrakannya
+        # kosong hanya ketika mungkin, lalu balik ke slot aslinya saat tabrakannya
 # hilang — dua arah lompat, sama saja buruknya.
 _TOKEN_UNIVERSE = [
     "BTC", "ETH", "SOL", "XRP", "BNB", "DOGE", "NEAR", "HYPE",

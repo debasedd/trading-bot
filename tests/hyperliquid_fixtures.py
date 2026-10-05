@@ -125,7 +125,7 @@ def make_info_double(position_state, meta_universe=None):
     Ini BUKAN stub untuk_logika yang sedang diuji. Yang diuji adalah
     `LiveExchange.symbol_notional` -- yaitu bagaimana ia membaca field
     dari respons. `get_account_state()` hanya meneruskan, jadi menyediakannya
-    lewat objek ini等同于 memanggil API sungguhan minus jaringan.
+            lewat objek ini setara dengan memanggil API sungguhan minus jaringan.
 
     Data yang dikembalikan adalah fixture rekaman, bukan karangan.
     """
